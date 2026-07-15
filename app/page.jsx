@@ -112,21 +112,71 @@ export default function PerfectPlayerUI() {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // 2. Fetch Core APIs
+  // 2. Fetch Core APIs & Advanced Data Merging
   useEffect(() => {
     if (!isMounted || isOffline) return;
 
     const fetchInitialData = async () => {
       try {
         setIsLoading(true);
+        // 1. Fetch Global Token
         const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
         const tokenData = await tokenRes.json();
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
         if (extractedCookie) tokenRef.current = extractedCookie;
 
+        // 2. Fetch Standard Channels & Extract jiotvpllive domains
         const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
-        const standardData = await standardRes.json();
+        const standardDataRaw = await standardRes.json();
 
+        const standardData = [];
+        const removedStandardMap = new Map();
+
+        standardDataRaw.forEach(c => {
+          if (c.url && c.url.includes('jiotvpllive.cdn.jio.com')) {
+            // Save metadata temporarily using ID
+            if (c.id) removedStandardMap.set(String(c.id), c);
+          } else {
+            standardData.push(c);
+          }
+        });
+
+        // 3. Fetch The NEW Unique Cookie API for removed channels
+        let newApiData = [];
+        try {
+          const newApiRes = await fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${new Date().getTime()}`);
+          const newApiJson = await newApiRes.json();
+          
+          const processResults = (list) => {
+            if (!Array.isArray(list)) return [];
+            return list.map(item => {
+              // Match with the banner and category we saved from the first API
+              const meta = removedStandardMap.get(String(item.channel_id)) || {};
+              let finalUrl = item.error_details?.final_url || item.final_url || "";
+              
+              if (!finalUrl) return null;
+              
+              return {
+                name: meta.name || item.channel_name || "Unknown",
+                url: finalUrl, // Has ?hdnea=... baked perfectly in
+                keyId: meta.keyId || "null",
+                key: meta.key || "null",
+                cookie: "", // Shaka will skip appending because URL already has hdnea
+                category: meta.category || meta.group || meta.group_title || "Others",
+                logo: meta.logo || `https://jiotv.catchup.cdn.jio.com/dare_images/images/${item.channel_id}.png`
+              };
+            }).filter(Boolean);
+          };
+          
+          // User note: "failed means success" 
+          const succ = processResults(newApiJson.successful_results);
+          const fail = processResults(newApiJson.failed_results); 
+          newApiData = [...succ, ...fail];
+        } catch (e) {
+          console.error("New Token API Error", e);
+        }
+
+        // 4. Fetch Premium Channels
         let premiumData = [];
         try {
           const premRes = await fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${new Date().getTime()}`);
@@ -144,16 +194,18 @@ export default function PerfectPlayerUI() {
           }
         } catch (e) { console.error("Premium Fetch Error", e); }
 
+        // 5. Custom Channels
         const customChannels = [
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
         ];
 
-        const combined = [...premiumData, ...customChannels, ...standardData];
+        // Merge Everything!
+        const combined = [...premiumData, ...customChannels, ...standardData, ...newApiData];
         setChannels(combined);
 
-        // Map & Sort Categories
+        // Map & Sort Categories precisely as requested
         const allCats = combined.map(c => c.category || c.group || c.group_title || 'Others');
         const uniqueCats = new Set(allCats);
         
@@ -204,6 +256,7 @@ export default function PerfectPlayerUI() {
           const currentToken = currentChannel?.cookie ? currentChannel.cookie : tokenRef.current;
           let uri = request.uris[0];
           
+          // Network engine will safely SKIP appending if 'hdnea' is already in the URL (New API)
           if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
              const sep = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
@@ -412,7 +465,7 @@ export default function PerfectPlayerUI() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
               <Loader2 className="animate-spin text-pink-500" size={36} />
-              <p className="tracking-widest text-xs font-semibold uppercase">Conecting to Live8481</p>
+              <p className="tracking-widest text-xs font-semibold uppercase">Connecting to Live@8481</p>
             </div>
           ) : (
             <>
