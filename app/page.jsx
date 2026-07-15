@@ -94,7 +94,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
 
-  // 1. Mark as Mounted, Load LocalStorage & Setup Network
+  // 1. Mark as Mounted, Load LocalStorage & Setup Network & Android Back Button Logic
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
@@ -108,6 +108,15 @@ export default function PerfectPlayerUI() {
       
       const storedLast = JSON.parse(localStorage.getItem('last_played_8481') || 'null');
       setLastPlayed(storedLast);
+
+      // Listen for hardware/browser back button
+      const handlePopState = (e) => {
+        if (activeChannelRef.current) {
+          setActiveChannel(null);
+        }
+      };
+      window.addEventListener('popstate', handlePopState);
+      return () => window.removeEventListener('popstate', handlePopState);
     }
   }, []);
 
@@ -442,14 +451,31 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeChannel]);
 
-  // Handle Selection
+  // Handle Selection & Push State for Back button
   const handleChannelSelect = useCallback((channel) => {
+    // Only push a new state if we are coming from the main screen,
+    // otherwise replace the state so back button takes us out directly.
+    if (!activeChannelRef.current && typeof window !== 'undefined') {
+      window.history.pushState({ playerOpen: true }, '');
+    } else if (typeof window !== 'undefined') {
+      window.history.replaceState({ playerOpen: true }, '');
+    }
+
     setActiveChannel(channel);
     setSearchQuery('');
     
     setLastPlayed(channel);
     localStorage.setItem('last_played_8481', JSON.stringify(channel));
   }, []);
+
+  // Handle Custom UI Back Action
+  const handleUiBack = () => {
+    if (window.history.state && window.history.state.playerOpen) {
+      window.history.back(); // Trigger popstate which closes player
+    } else {
+      setActiveChannel(null); // Fallback
+    }
+  };
 
   if (!isMounted) return <div className="h-screen w-screen bg-[#020813]" />;
 
@@ -568,7 +594,7 @@ export default function PerfectPlayerUI() {
         {activeChannel && (
           <div className="flex items-center justify-between p-3 bg-[#0a182b] border-b border-blue-400/10 shadow-lg z-30 flex-shrink-0 w-full">
             <div className="flex items-center gap-3">
-              <button onClick={() => setActiveChannel(null)} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-blue-900/20 py-1.5 px-3 rounded-lg transition-colors">
+              <button onClick={handleUiBack} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-blue-900/20 py-1.5 px-3 rounded-lg transition-colors">
                 <ArrowLeft size={18} /> <span className="text-sm tracking-wider">BACK</span>
               </button>
               
@@ -612,28 +638,31 @@ export default function PerfectPlayerUI() {
                 autoPlay 
                 playsInline 
               />
-              
-              {/* YOUTUBE STYLE ZOOM/FIT TOGGLE BUTTON */}
-              {activeChannel && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsZoomed(!isZoomed);
-                  }}
-                  className="absolute top-4 right-4 md:top-5 md:right-5 z-[999] p-2 md:p-2.5 bg-black/40 hover:bg-black/70 text-white/80 hover:text-white rounded-full backdrop-blur-md transition-all duration-200 shadow-lg"
-                  title={isZoomed ? "Fit to Screen" : "Zoom to Fill"}
-                >
-                  {isZoomed ? <Minimize size={20} /> : <Maximize size={20} />}
-                </button>
-              )}
             </div>
           </div>
 
           {activeChannel && (
             <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
-              <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
-                <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
-              </h3>
+              
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
+                </h3>
+                
+                {/* AUTO FIT TOGGLE RELOCATED HERE */}
+                <button 
+                  onClick={() => setIsZoomed(!isZoomed)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold transition-colors border shadow-sm ${
+                    isZoomed 
+                    ? 'bg-pink-500/20 text-pink-400 border-pink-500/50 hover:bg-pink-500/30' 
+                    : 'bg-blue-900/40 text-blue-300 border-blue-400/20 hover:bg-blue-900/60'
+                  }`}
+                  title="Toggle Full Screen Auto-Fit"
+                >
+                  {isZoomed ? <Minimize size={12} /> : <Maximize size={12} />}
+                  AUTO FIT: {isZoomed ? 'ON' : 'OFF'}
+                </button>
+              </div>
               
               <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/30 scrollbar-track-transparent">
                 {similarChannels.map((c, idx) => (
