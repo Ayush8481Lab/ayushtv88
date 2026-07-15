@@ -51,19 +51,19 @@ export default function PerfectPlayerUI() {
   const uiRef = useRef(null);
   
   const tokenRef = useRef(""); 
-  const activeChannelRef = useRef(null); // Keeps track of playing channel for Network Filter
+  const activeChannelRef = useRef(null);
 
   // 1. Mark as Mounted
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // Update activeChannelRef whenever it changes
+  // Update activeChannelRef whenever it changes (for Network Engine)
   useEffect(() => {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // 2. Fetch Core APIs (Standard & Premium Channels)
+  // 2. Fetch Core APIs (Standard, Premium, & Custom Channels)
   useEffect(() => {
     if (!isMounted) return;
 
@@ -76,10 +76,10 @@ export default function PerfectPlayerUI() {
         if (extractedCookie) tokenRef.current = extractedCookie;
 
         // Fetch Standard Channels
-        const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
+        const standardRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
         const standardData = await standardRes.json();
 
-        // Fetch Premium Channels (New API)
+        // Fetch Premium Channels
         let premiumData = [];
         try {
           const premRes = await fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${new Date().getTime()}`);
@@ -87,20 +87,16 @@ export default function PerfectPlayerUI() {
           
           if (premJson && premJson.channels) {
             premiumData = premJson.channels.map(c => {
-              // Advanced Logo Extractor Regex
               let logoName = c.id; 
               const match = c.stream_url.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
-              if (match) {
-                // Strips out _BTS, _MOB, _xyz at the end to get raw channel name
-                logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
-              }
+              if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
 
               return {
                 name: c.name,
                 url: c.stream_url,
                 keyId: c.key_id,
                 key: c.key,
-                cookie: c.cookie, // Unique Cookie
+                cookie: c.cookie,
                 category: 'Premium',
                 logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png`
               };
@@ -110,8 +106,39 @@ export default function PerfectPlayerUI() {
           console.error("Premium API Error:", e);
         }
 
-        // Combine Data safely
-        const combined = [...premiumData, ...standardData];
+        // Add User Requested Custom Channels (M3U8)
+        const customChannels = [
+          {
+            name: "Dangal",
+            url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8",
+            keyId: "null",
+            key: "null",
+            cookie: "",
+            category: "Entertainment",
+            logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300"
+          },
+          {
+            name: "Dangal 2",
+            url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8",
+            keyId: "null",
+            key: "null",
+            cookie: "",
+            category: "Entertainment",
+            logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50"
+          },
+          {
+            name: "Bhojpuri Cinema",
+            url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8",
+            keyId: "null",
+            key: "null",
+            cookie: "",
+            category: "Bhojpuri",
+            logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250"
+          }
+        ];
+
+        // Combine All Data
+        const combined = [...premiumData, ...customChannels, ...standardData];
         setChannels(combined);
 
         // Map Categories (Force 'Premium' next to 'All')
@@ -136,7 +163,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player (Network Engine logic upgraded)
+  // 3. Initialize Shaka Player
   useEffect(() => {
     if (!isMounted || !videoRef.current || playerRef.current) return;
 
@@ -158,12 +185,12 @@ export default function PerfectPlayerUI() {
         ]
       });
 
+      // Maintain proper cookie logic
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
         if (isManifest || isSegment) {
-          // Check if channel has Unique Cookie, otherwise fallback to Global
           const currentChannel = activeChannelRef.current;
           const currentToken = currentChannel?.cookie ? currentChannel.cookie : tokenRef.current;
           
@@ -189,7 +216,7 @@ export default function PerfectPlayerUI() {
     };
   }, [isMounted]);
 
-  // 4. Handle Channel Playback
+  // 4. Handle Channel Playback & System Notification Media
   useEffect(() => {
     if (!playerRef.current) return;
 
@@ -216,6 +243,18 @@ export default function PerfectPlayerUI() {
         });
 
         await player.load(activeChannel.url);
+
+        // Update Notification Control Center (MediaSession API)
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = new window.MediaMetadata({
+            title: activeChannel.name,
+            artist: 'Ayush@8481', // Requested Artist Name
+            artwork: [
+              { src: activeChannel.logo, sizes: '512x512' }
+            ]
+          });
+        }
+
       } catch (error) {
         console.error("Playback error:", error);
       }
@@ -245,6 +284,7 @@ export default function PerfectPlayerUI() {
 
   const handleChannelSelect = useCallback((channel) => {
     setActiveChannel(channel);
+    setSearchQuery(''); // Clears search when channel is selected
   }, []);
 
   const handleBackToMain = () => setActiveChannel(null);
@@ -255,8 +295,9 @@ export default function PerfectPlayerUI() {
     <div className="flex h-[100dvh] w-full bg-[#0a0a0f] text-white font-sans overflow-hidden selection:bg-pink-500/30">
       
       {/* ======================= MAIN PAGE (GRID VIEW) ======================= */}
-      <aside className={`flex flex-col w-full md:w-[350px] lg:w-[400px] bg-[#0f0f13] border-r border-white/5 z-10
-        ${activeChannel ? 'hidden md:flex h-full' : 'flex h-[100dvh]'}`}>
+      {/* Hides entirely when watching a video to fix landscape/tablet issues */}
+      <aside className={`flex flex-col bg-[#0f0f13] border-r border-white/5 z-10
+        ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
         
         <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-white/5 bg-[#141419]">
           <div className="flex items-center gap-2 text-pink-500">
@@ -285,7 +326,6 @@ export default function PerfectPlayerUI() {
           </div>
         )}
 
-        {/* Dynamic Categories */}
         <div className="p-3 border-b border-white/5 bg-[#0a0a0f] flex-shrink-0">
           <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
             {categories.map((cat) => (
@@ -296,7 +336,7 @@ export default function PerfectPlayerUI() {
                   activeCategory === cat 
                   ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' 
                   : cat === 'Premium' 
-                  ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' // Highlight Premium mildly
+                  ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
                   : 'bg-white/5 text-gray-400 hover:bg-white/10'
                 }`}
               >
@@ -306,7 +346,6 @@ export default function PerfectPlayerUI() {
           </div>
         </div>
 
-        {/* Super Fast Rendering Grid */}
         <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 p-3 md:p-4 will-change-scroll transform-gpu">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-500">
@@ -314,7 +353,7 @@ export default function PerfectPlayerUI() {
               <p className="tracking-widest text-xs font-semibold uppercase">Loading Engine...</p>
             </div>
           ) : (
-            <div className="grid grid-cols-4 md:grid-cols-3 gap-2 md:gap-3">
+            <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
               {filteredChannels.map((channel, idx) => (
                 <ChannelCard key={idx} channel={channel} isActive={activeChannel?.name === channel.name} onClick={handleChannelSelect} />
               ))}
@@ -323,27 +362,31 @@ export default function PerfectPlayerUI() {
         </div>
       </aside>
 
-      {/* ======================= PLAYER PAGE (YOUTUBE LAYOUT) ======================= */}
-      <main className={`flex-col w-full md:flex-1 bg-black z-20 transition-all duration-0
-        ${activeChannel ? 'flex h-[100dvh] md:h-full' : 'hidden md:flex h-full'}`}>
+      {/* ======================= PLAYER PAGE (WATCH VIEW) ======================= */}
+      {/* Empty State player on desktop, Full Youtube UI when active */}
+      <main className={`flex-col bg-black z-20 transition-all duration-0
+        ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
         
-        {/* Mobile "Back" Header */}
+        {/* Watch View Header (Visible on ALL devices when playing) */}
         {activeChannel && (
-          <div className="md:hidden flex items-center p-3 bg-[#141419] border-b border-white/10 shadow-lg z-30 flex-shrink-0">
-            <button onClick={handleBackToMain} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-white/5 py-1.5 px-3 rounded-lg">
-              <ArrowLeft size={18} />
-              <span className="text-sm tracking-wider">BACK</span>
-            </button>
-            <div className="ml-auto text-white/80 text-sm font-semibold truncate max-w-[200px]">{activeChannel.name}</div>
+          <div className="flex items-center justify-between p-3 bg-[#141419] border-b border-white/10 shadow-lg z-30 flex-shrink-0 w-full">
+            <div className="flex items-center gap-3">
+              <button onClick={handleBackToMain} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-white/5 py-1.5 px-3 rounded-lg transition-colors">
+                <ArrowLeft size={18} />
+                <span className="text-sm tracking-wider">BACK</span>
+              </button>
+              <div className="text-white/90 text-sm md:text-base font-semibold truncate max-w-[180px] md:max-w-none">
+                {activeChannel.name}
+              </div>
+            </div>
+            <div className="hidden md:flex items-center gap-2 text-pink-500 mr-2 opacity-80">
+              <Tv size={18} />
+              <h1 className="text-sm font-black tracking-widest">Live@8481</h1>
+            </div>
           </div>
         )}
 
-        {/* 
-          YOUTUBE LAYOUT MAGIC: 
-          landscape:flex-row -> Uses left/right split on mobile rotated
-          md:flex-row -> Uses left/right split on PC
-        */}
-        <div className="flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden">
+        <div className={`flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden`}>
           
           {/* Main Video Area */}
           <div className="w-full landscape:flex-1 md:flex-1 relative bg-black flex-shrink-0 flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto">
@@ -360,7 +403,7 @@ export default function PerfectPlayerUI() {
 
           {/* Similar Category Area (Right Sidebar on Landscape/Desktop, Bottom on Portrait Mobile) */}
           {activeChannel && (
-            <div className="w-full landscape:w-[260px] lg:w-[320px] md:w-[280px] flex-1 landscape:flex-none md:flex-none 
+            <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none 
                             bg-[#111116] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-white/5 
                             p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
               <h3 className="text-white/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
@@ -383,7 +426,6 @@ export default function PerfectPlayerUI() {
                   <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
                 ))}
               </div>
-
             </div>
           )}
         </div>
