@@ -31,7 +31,7 @@ export default function App() {
     setIsMounted(true);
   }, []);
 
-  // 2. Fetch API Data (EXACT LOGIC FROM WORKING CODE)
+  // 2. Fetch API Data (EXACT LOGIC FROM YOUR WORKING CODE)
   useEffect(() => {
     if (!isMounted) return;
 
@@ -64,15 +64,19 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player (EXACT LOGIC FROM WORKING CODE)
+  // 3. Initialize Shaka Player (EXACT LOGIC FROM YOUR WORKING CODE)
   useEffect(() => {
-    if (!isMounted || !videoRef.current || playerRef.current) return;
+    // We now initialize regardless of activeChannel so the player is ready immediately
+    if (!isMounted || !videoRef.current || !containerRef.current || playerRef.current) return;
 
     const initPlayer = async () => {
       const shaka = await import('shaka-player/dist/shaka-player.ui');
       shaka.polyfill.installAll();
 
-      if (!shaka.Player.isBrowserSupported()) return;
+      if (!shaka.Player.isBrowserSupported()) {
+        console.error("Browser not supported!");
+        return;
+      }
 
       const video = videoRef.current;
       const container = containerRef.current;
@@ -105,7 +109,7 @@ export default function App() {
       });
 
       player.addEventListener('error', (e) => {
-        console.error("Player Error:", e.detail);
+        console.error("Player error:", e.detail);
       });
 
       playerRef.current = player;
@@ -120,7 +124,7 @@ export default function App() {
     };
   }, [isMounted]);
 
-  // 4. Handle Video Playback (EXACT LOGIC FROM WORKING CODE)
+  // 4. Handle Video Playback (EXACT LOGIC FROM YOUR WORKING CODE)
   useEffect(() => {
     if (!activeChannel || !playerRef.current) return;
 
@@ -131,6 +135,7 @@ export default function App() {
         
         let drmConfig = { clearKeys: {} };
         
+        // Exactly matches your working code string checks
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
@@ -182,7 +187,7 @@ export default function App() {
       <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden selection:bg-cyan-500/30">
         
         {/* TOP NAVIGATION HEADER */}
-        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-20 flex-none shadow-md">
+        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-30 flex-none shadow-md">
           <div className="flex items-center gap-2">
             {activeChannel && (
               <button 
@@ -222,15 +227,12 @@ export default function App() {
           </div>
         </header>
 
-        {/* MAIN BODY AREA */}
-        <main className="flex flex-1 overflow-hidden relative">
+        {/* MAIN BODY AREA - Absolute sliding architecture fixes the Shaka hidden DOM bug! */}
+        <main className="flex flex-1 overflow-hidden relative w-full h-full">
           
           {/* LEFT PANE: Channels & Categories */}
-          <div className={`flex flex-col bg-[#0f0f0f] border-r border-[#222] transition-all duration-300 z-10
-              ${activeChannel 
-                ? 'hidden md:flex md:w-[320px] lg:w-[380px]' // Sidebar Mode
-                : 'flex w-full'                             // Fullscreen Grid Mode
-              }`}
+          <div className={`absolute md:relative flex flex-col bg-[#0f0f0f] border-r border-[#222] z-20 transition-transform duration-300 w-full md:w-[320px] lg:w-[380px] h-full
+              ${activeChannel ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}`}
           >
             {/* Horizontal Categories Menu */}
             <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2 bg-[#111] shadow-md flex-none border-b border-[#222]">
@@ -290,12 +292,21 @@ export default function App() {
           </div>
 
           {/* RIGHT PANE: Video Player & Related Channels */}
-          <div className={`flex flex-col bg-black overflow-y-auto scrollbar-hide w-full transition-all duration-300
-              ${activeChannel ? 'flex flex-1' : 'hidden'}`}
+          {/* This panel is NEVER display: none. It always exists so Shaka binds perfectly! */}
+          <div className={`absolute md:relative flex flex-col bg-black overflow-y-auto scrollbar-hide z-10 transition-transform duration-300 w-full flex-1 h-full
+              ${!activeChannel ? 'translate-x-full md:translate-x-0' : 'translate-x-0'}`}
           >
+            {/* Desktop Placeholder overlay when no channel is selected */}
+            {!activeChannel && (
+              <div className="hidden md:flex absolute inset-0 flex-col items-center justify-center bg-[#0a0a0a] z-20 text-gray-500">
+                <PlayCircle size={64} className="mb-4 opacity-20" />
+                <p className="text-lg tracking-wider font-light">Select a stream to begin playback</p>
+              </div>
+            )}
+            
             {/* Shaka Video Player Container */}
             <div className="w-full bg-black relative shadow-2xl border-b border-[#222]">
-              <div ref={containerRef} className="mx-auto w-full max-w-6xl aspect-video relative">
+              <div ref={containerRef} className="mx-auto w-full max-w-6xl aspect-video relative z-10 bg-black">
                 <video ref={videoRef} className="w-full h-full object-contain bg-black" autoPlay playsInline />
               </div>
             </div>
