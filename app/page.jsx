@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
 
 // ==========================================
 // OPTIMIZED CARD COMPONENT (Hotstar/Jio Style Lazy Loading)
@@ -82,6 +82,9 @@ export default function PerfectPlayerUI() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  
+  // Zoom State
+  const [isZoomed, setIsZoomed] = useState(false);
 
   // Refs
   const videoRef = useRef(null);
@@ -110,6 +113,8 @@ export default function PerfectPlayerUI() {
 
   useEffect(() => {
     activeChannelRef.current = activeChannel;
+    // Reset zoom whenever a new channel is selected
+    setIsZoomed(false);
   }, [activeChannel]);
 
   // 2. Fetch Core APIs (Including the New Dictionary APIs)
@@ -601,7 +606,26 @@ export default function PerfectPlayerUI() {
             )}
 
             <div ref={containerRef} className={`w-full h-full absolute inset-0 z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-              <video ref={videoRef} className="w-full h-full bg-black object-contain" autoPlay playsInline />
+              <video 
+                ref={videoRef} 
+                className={`w-full h-full bg-black transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
+                autoPlay 
+                playsInline 
+              />
+              
+              {/* YOUTUBE STYLE ZOOM/FIT TOGGLE BUTTON */}
+              {activeChannel && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsZoomed(!isZoomed);
+                  }}
+                  className="absolute top-4 right-4 md:top-5 md:right-5 z-[999] p-2 md:p-2.5 bg-black/40 hover:bg-black/70 text-white/80 hover:text-white rounded-full backdrop-blur-md transition-all duration-200 shadow-lg"
+                  title={isZoomed ? "Fit to Screen" : "Zoom to Fill"}
+                >
+                  {isZoomed ? <Minimize size={20} /> : <Maximize size={20} />}
+                </button>
+              )}
             </div>
           </div>
 
