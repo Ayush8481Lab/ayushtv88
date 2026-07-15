@@ -124,7 +124,7 @@ export default function PerfectPlayerUI() {
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
         if (extractedCookie) tokenRef.current = extractedCookie;
 
-        const standardRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
+        const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
         const standardData = await standardRes.json();
 
         let premiumData = [];
