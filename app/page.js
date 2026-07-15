@@ -12,7 +12,7 @@ export default function Home() {
     // Fetch your channel list (standard unauthenticated fetching)
     const fetchChannels = async () => {
       try {
-        const response = await fetch('YOUR_CHANNEL_API_ENDPOINT');
+        const response = await fetch('https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb');
         const data = await response.json();
         setChannels(data);
       } catch (error) {
