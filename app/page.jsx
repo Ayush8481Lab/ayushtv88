@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
 
 // ==========================================
 // OPTIMIZED CARD COMPONENT (Hotstar/Jio Style Lazy Loading)
@@ -17,9 +17,8 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
       title={channel.name}
       className={`relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
         transition-all duration-300 ease-in-out hover:scale-105 active:scale-95
-        ${isActive ? 'ring-4 ring-pink-500 scale-105 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : 'border border-gray-200/10 shadow-sm'}`}
+        ${isActive ? 'ring-4 ring-pink-500 scale-105 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : 'border border-blue-900/20 shadow-sm'}`}
     >
-      {/* Show Channel Name as fallback until the image fully loads */}
       {(!loaded || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-2">
           <span className="text-[10px] md:text-xs font-bold text-gray-800 text-center uppercase tracking-wider leading-tight">
@@ -49,7 +48,6 @@ ChannelCard.displayName = "ChannelCard";
 // ==========================================
 const buildMasterPlaylist = (url) => {
   const base = url.substring(0, url.indexOf('/live_'));
-  // Added standard codec definitions to ensure Shaka recognizes the HLS streams properly
   return `#EXTM3U
 #EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240,CODECS="avc1.4d4015,mp4a.40.2"
 ${base}/live_240p/chunks.m3u8
@@ -63,6 +61,9 @@ ${base}/live_720p/chunks.m3u8
 ${base}/live_1080p/chunks.m3u8`;
 };
 
+// Required Category Order
+const CATEGORY_ORDER = ['All', 'Premium', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
+
 export default function PerfectPlayerUI() {
   // Core States
   const [isMounted, setIsMounted] = useState(false);
@@ -74,6 +75,10 @@ export default function PerfectPlayerUI() {
   const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
+  // Storage States (Favorites & Last Played)
+  const [favorites, setFavorites] = useState([]);
+  const [lastPlayed, setLastPlayed] = useState(null);
+
   // UI States
   const [activeChannel, setActiveChannel] = useState(null);
   const [activeCategory, setActiveCategory] = useState('All');
@@ -88,22 +93,28 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
 
-  // 1. Mark as Mounted & Setup Network Listener
+  // 1. Mark as Mounted, Load LocalStorage & Setup Network
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
       setIsOffline(!navigator.onLine);
       window.addEventListener('online', () => setIsOffline(false));
       window.addEventListener('offline', () => setIsOffline(true));
+
+      // Load Storage
+      const storedFavs = JSON.parse(localStorage.getItem('fav_channels_8481') || '[]');
+      setFavorites(storedFavs);
+      
+      const storedLast = JSON.parse(localStorage.getItem('last_played_8481') || 'null');
+      setLastPlayed(storedLast);
     }
   }, []);
 
-  // Sync Active Channel for request filters
   useEffect(() => {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // 2. Fetch Core APIs (Standard, Premium, Custom)
+  // 2. Fetch Core APIs
   useEffect(() => {
     if (!isMounted || isOffline) return;
 
@@ -144,13 +155,15 @@ export default function PerfectPlayerUI() {
         const combined = [...premiumData, ...customChannels, ...standardData];
         setChannels(combined);
 
+        // Map & Sort Categories
         const allCats = combined.map(c => c.category || c.group || c.group_title || 'Others');
         const uniqueCats = new Set(allCats);
-        const sortedCategories = ['All'];
-        if (uniqueCats.has('Premium')) { sortedCategories.push('Premium'); uniqueCats.delete('Premium'); }
-        uniqueCats.forEach(cat => sortedCategories.push(cat));
         
-        setCategories(sortedCategories);
+        const finalCategories = [...CATEGORY_ORDER];
+        CATEGORY_ORDER.forEach(cat => uniqueCats.delete(cat));
+        uniqueCats.forEach(cat => finalCategories.push(cat));
+        
+        setCategories(finalCategories);
         setIsLoading(false);
       } catch (error) {
         console.error("Master API Fetch Error:", error);
@@ -185,7 +198,6 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
-      // UPDATED NETWORK FILTER: Prevents Jio Tokens from hitting external/Akamai CDNs
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -194,7 +206,6 @@ export default function PerfectPlayerUI() {
           const currentToken = currentChannel?.cookie ? currentChannel.cookie : tokenRef.current;
           let uri = request.uris[0];
           
-          // Strict check: Only append Jio Tokens if the URL belongs to jio.com
           if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
              const sep = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
@@ -215,12 +226,12 @@ export default function PerfectPlayerUI() {
     };
   }, [isMounted, isOffline]);
 
-  // 4. Handle Channel Playback & Quality Generation
+  // 4. Handle Channel Playback
   const executePlayStream = useCallback(async () => {
     if (!playerRef.current || !activeChannel) return;
     const player = playerRef.current;
     
-    setPlayerError(null); // Clear old errors
+    setPlayerError(null);
 
     try {
       await player.unload();
@@ -239,22 +250,16 @@ export default function PerfectPlayerUI() {
       let finalUrl = activeChannel.url;
       let forceMimeType = undefined;
 
-      // Quality Generator for Custom HLS Links (Dangal, etc.)
       if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
          const masterStr = buildMasterPlaylist(finalUrl);
          const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
          finalUrl = URL.createObjectURL(blob);
-         forceMimeType = 'application/x-mpegURL'; // Extremely important for Blob URLs
+         forceMimeType = 'application/x-mpegURL'; 
       }
 
-      // Load stream, explicitly providing MIME type if it's a blob so Shaka doesn't get confused
-      if (forceMimeType) {
-        await player.load(finalUrl, null, forceMimeType);
-      } else {
-        await player.load(finalUrl);
-      }
+      if (forceMimeType) await player.load(finalUrl, null, forceMimeType);
+      else await player.load(finalUrl);
 
-      // System Notification API (Ayush@8481 logic)
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new window.MediaMetadata({
           title: activeChannel.name,
@@ -271,22 +276,42 @@ export default function PerfectPlayerUI() {
 
   useEffect(() => {
     executePlayStream();
-    
-    // Stop playback if closed
-    return () => {
-      if (!activeChannel && playerRef.current) playerRef.current.unload();
-    }
+    return () => { if (!activeChannel && playerRef.current) playerRef.current.unload(); }
   }, [executePlayStream, activeChannel]);
 
-  // Memos
+  // Favorites Toggle Logic
+  const toggleFavorite = () => {
+    if (!activeChannel) return;
+    const isFav = favorites.includes(activeChannel.name);
+    let newFavs;
+    if (isFav) {
+      newFavs = favorites.filter(name => name !== activeChannel.name);
+    } else {
+      newFavs = [...favorites, activeChannel.name];
+    }
+    setFavorites(newFavs);
+    localStorage.setItem('fav_channels_8481', JSON.stringify(newFavs));
+  };
+
+  // Memos - Advanced Filtration
   const filteredChannels = useMemo(() => {
     return channels.filter(c => {
-      const cCat = c.category || c.group || c.group_title || 'Others';
-      const matchCat = activeCategory === 'All' || cCat === activeCategory;
       const matchSearch = c.name?.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchSearch;
+      if (!matchSearch) return false;
+
+      const cCat = c.category || c.group || c.group_title || 'Others';
+
+      if (activeCategory === 'All') return true;
+      if (activeCategory === 'Favorites') return favorites.includes(c.name);
+      
+      // Sports Category: Show regular sports OR premium channels containing "sport"
+      if (activeCategory === 'Sports') {
+        return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
+      }
+      
+      return cCat === activeCategory;
     });
-  }, [channels, activeCategory, searchQuery]);
+  }, [channels, activeCategory, searchQuery, favorites]);
 
   const similarChannels = useMemo(() => {
     if (!activeChannel) return [];
@@ -297,29 +322,33 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeChannel]);
 
+  // Handle Selection (Saves to Last Played)
   const handleChannelSelect = useCallback((channel) => {
     setActiveChannel(channel);
-    setSearchQuery(''); // Clears search
+    setSearchQuery('');
+    
+    // Save as Continue Watching
+    setLastPlayed(channel);
+    localStorage.setItem('last_played_8481', JSON.stringify(channel));
   }, []);
 
-  if (!isMounted) return <div className="h-screen w-screen bg-[#09090b]" />;
+  if (!isMounted) return <div className="h-screen w-screen bg-[#020813]" />;
 
   // ----------------------------------------------------
-  // OFFLINE UI (No Internet Connection Screen)
+  // OFFLINE UI (Navy Theme)
   // ----------------------------------------------------
   if (isOffline) {
     return (
-      <div className="flex flex-col items-center justify-center h-[100dvh] w-full bg-[#0a0a0f] text-white">
+      <div className="flex flex-col items-center justify-center h-[100dvh] w-full bg-[#020813] text-white">
         <WifiOff size={70} className="text-pink-500 mb-6 drop-shadow-[0_0_15px_rgba(236,72,153,0.5)] animate-pulse" />
         <h1 className="text-2xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400 mb-2">
           NO INTERNET
         </h1>
-        <p className="text-gray-400 text-sm mb-8 text-center max-w-[250px] leading-relaxed">
+        <p className="text-blue-200/50 text-sm mb-8 text-center max-w-[250px] leading-relaxed">
           Please check your network connection and try again.
         </p>
-        <button 
-          onClick={() => { if(navigator.onLine) setIsOffline(false); }}
-          className="flex items-center gap-2 px-8 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full font-bold tracking-widest transition-colors"
+        <button onClick={() => { if(navigator.onLine) setIsOffline(false); }}
+          className="flex items-center gap-2 px-8 py-3 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-400/20 rounded-full font-bold tracking-widest transition-colors"
         >
           <RefreshCcw size={18} /> RETRY
         </button>
@@ -328,93 +357,127 @@ export default function PerfectPlayerUI() {
   }
 
   // ----------------------------------------------------
-  // MAIN APP UI
+  // MAIN APP UI (Deep Navy Theme)
   // ----------------------------------------------------
   return (
-    <div className="flex h-[100dvh] w-full bg-[#0a0a0f] text-white font-sans overflow-hidden selection:bg-pink-500/30">
+    <div className="flex h-[100dvh] w-full bg-[#020813] text-white font-sans overflow-hidden selection:bg-pink-500/30">
       
       {/* SIDEBAR / MAIN GRID */}
-      <aside className={`flex flex-col bg-[#0f0f13] border-r border-white/5 z-10 
+      <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 
         ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
         
-        <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-white/5 bg-[#141419]">
+        <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-blue-400/10 bg-[#0a182b]">
           <div className="flex items-center gap-2 text-pink-500">
             <Tv size={24} className="drop-shadow-[0_0_5px_rgba(236,72,153,0.5)]" />
             <h1 className="text-lg md:text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400">
               Live@8481
             </h1>
           </div>
-          <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors">
+          <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-full bg-blue-900/20 hover:bg-blue-900/40 transition-colors text-blue-200">
             {isSearchOpen ? <X size={20} /> : <Search size={20} />}
           </button>
         </div>
 
         {isSearchOpen && (
-          <div className="p-3 bg-[#111116] flex-shrink-0 animate-in slide-in-from-top-1">
+          <div className="p-3 bg-[#0a182b] flex-shrink-0 animate-in slide-in-from-top-1">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400/50" size={16} />
               <input type="text" placeholder="Search channels..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#1a1a20] border border-white/10 rounded-lg py-2.5 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-pink-500 transition-colors"
+                className="w-full bg-[#11223d] border border-blue-400/20 rounded-lg py-2.5 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-pink-500 transition-colors"
               />
             </div>
           </div>
         )}
 
-        <div className="p-3 border-b border-white/5 bg-[#0a0a0f] flex-shrink-0">
-          <div className="flex overflow-x-auto gap-2 pb-2 scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+        <div className="p-3 border-b border-blue-400/10 bg-[#061121] flex-shrink-0">
+          <div className="flex overflow-x-auto gap-2 pb-2 scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/20 scrollbar-track-transparent">
             {categories.map((cat) => (
               <button key={cat} onClick={() => setActiveCategory(cat)}
-                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[13px] font-bold tracking-wider transition-colors duration-200 ${
-                  activeCategory === cat ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' : cat === 'Premium' ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                className={`whitespace-nowrap flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[13px] font-bold tracking-wider transition-colors duration-200 ${
+                  activeCategory === cat 
+                  ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' 
+                  : cat === 'Favorites'
+                  ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
+                  : cat === 'Premium' 
+                  ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                  : 'bg-blue-900/20 text-blue-200/70 hover:bg-blue-900/40'
                 }`}
               >
+                {cat === 'Favorites' && <Heart size={13} className={activeCategory === 'Favorites' ? "fill-white" : "fill-pink-400"} />}
                 {cat}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-white/10 p-3 md:p-4">
+        <div className="flex-1 overflow-y-auto scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/20 p-3 md:p-4">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-500">
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
               <Loader2 className="animate-spin text-pink-500" size={36} />
               <p className="tracking-widest text-xs font-semibold uppercase">Loading Engine...</p>
             </div>
           ) : (
-            <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
-              {filteredChannels.map((channel, idx) => (
-                <ChannelCard key={idx} channel={channel} isActive={activeChannel?.name === channel.name} onClick={handleChannelSelect} />
-              ))}
-            </div>
+            <>
+              {/* CONTINUE WATCHING SECTION */}
+              {activeCategory === 'All' && !searchQuery && lastPlayed && (
+                <div className="mb-6 bg-[#0a182b]/50 p-3 rounded-2xl border border-blue-400/5">
+                  <h2 className="text-blue-200/80 text-[11px] font-bold mb-3 uppercase tracking-widest flex items-center gap-2">
+                    <PlayCircle size={14} className="text-pink-500" /> Continue Watching
+                  </h2>
+                  <div className="w-[120px]">
+                    <ChannelCard channel={lastPlayed} isActive={false} onClick={handleChannelSelect} />
+                  </div>
+                </div>
+              )}
+
+              {/* MAIN GRID */}
+              <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
+                {filteredChannels.length > 0 ? (
+                  filteredChannels.map((channel, idx) => (
+                    <ChannelCard key={idx} channel={channel} isActive={activeChannel?.name === channel.name} onClick={handleChannelSelect} />
+                  ))
+                ) : (
+                  <div className="col-span-full text-center py-10 text-blue-200/40 text-sm">No channels found.</div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </aside>
 
       {/* PLAYER UI */}
-      <main className={`flex-col bg-black z-20 transition-all duration-0 ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
+      <main className={`flex-col bg-[#020813] z-20 transition-all duration-0 ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
         
         {activeChannel && (
-          <div className="flex items-center justify-between p-3 bg-[#141419] border-b border-white/10 shadow-lg z-30 flex-shrink-0 w-full">
+          <div className="flex items-center justify-between p-3 bg-[#0a182b] border-b border-blue-400/10 shadow-lg z-30 flex-shrink-0 w-full">
             <div className="flex items-center gap-3">
-              <button onClick={() => setActiveChannel(null)} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-white/5 py-1.5 px-3 rounded-lg transition-colors">
+              <button onClick={() => setActiveChannel(null)} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-blue-900/20 py-1.5 px-3 rounded-lg transition-colors">
                 <ArrowLeft size={18} /> <span className="text-sm tracking-wider">BACK</span>
               </button>
-              <div className="text-white/90 text-sm md:text-base font-semibold truncate max-w-[180px] md:max-w-none">{activeChannel.name}</div>
+              
+              <div className="flex items-center gap-2">
+                <div className="text-blue-50 text-sm md:text-base font-semibold truncate max-w-[150px] md:max-w-none">
+                  {activeChannel.name}
+                </div>
+                {/* FAVORITES HEART BUTTON */}
+                <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
+                  <Heart size={18} className={favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         <div className={`flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden`}>
           
-          <div className="w-full landscape:flex-1 md:flex-1 relative bg-black flex-shrink-0 flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto">
+          <div className="w-full landscape:flex-1 md:flex-1 relative bg-black flex-shrink-0 flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto shadow-2xl shadow-blue-900/20">
             {!activeChannel && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0f] z-0">
-                <PlayCircle size={70} className="text-white/5 mb-4 drop-shadow-lg" />
-                <p className="text-xl tracking-widest font-light text-white/20">Select a channel to play</p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020813] z-0">
+                <PlayCircle size={70} className="text-blue-900/30 mb-4 drop-shadow-lg" />
+                <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
               </div>
             )}
             
-            {/* Playback Error Overlay UI */}
             {playerError && activeChannel && (
               <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
                 <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
@@ -432,12 +495,12 @@ export default function PerfectPlayerUI() {
           </div>
 
           {activeChannel && (
-            <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#111116] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-white/5 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
-              <h3 className="text-white/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
+            <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
+              <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
               </h3>
               
-              <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-pink-600 scrollbar-track-transparent">
+              <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/30 scrollbar-track-transparent">
                 {similarChannels.map((c, idx) => (
                   <div key={idx} className="flex-shrink-0 w-[90px]">
                     <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
@@ -445,7 +508,7 @@ export default function PerfectPlayerUI() {
                 ))}
               </div>
 
-              <div className="hidden landscape:grid md:grid grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-pink-600 scrollbar-track-transparent content-start pr-1">
+              <div className="hidden landscape:grid md:grid grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/30 scrollbar-track-transparent content-start pr-1">
                 {similarChannels.map((c, idx) => (
                   <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
                 ))}
