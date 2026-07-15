@@ -112,37 +112,112 @@ export default function PerfectPlayerUI() {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  // 2. Fetch Core APIs
+  // 2. Fetch Core APIs (Including the New Dictionary APIs)
   useEffect(() => {
     if (!isMounted || isOffline) return;
 
     const fetchInitialData = async () => {
       try {
         setIsLoading(true);
-        const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
-        const tokenData = await tokenRes.json();
-        const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
-        if (extractedCookie) tokenRef.current = extractedCookie;
+        const ts = new Date().getTime();
 
-        const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
-        const standardData = await standardRes.json();
+        // Run all API fetches concurrently for maximum speed
+        const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes] = await Promise.allSettled([
+          fetch('https://allinonereborn2.online/jstrweb2/cookies.json'),
+          fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${ts}`),
+          fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${ts}`),
+          fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`), // Key Dictionary
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`) // URL Dictionary
+        ]);
 
+        // A) Process Token
+        if (tokenRes.status === 'fulfilled') {
+          try {
+            const tokenData = await tokenRes.value.json();
+            const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
+            if (extractedCookie) tokenRef.current = extractedCookie;
+          } catch (e) { console.error("Token Fetch Error", e); }
+        }
+
+        // B) Setup Keys Dictionary
+        const keysDict = new Map();
+        if (dictKeysRes.status === 'fulfilled') {
+          try {
+            const d1Json = await dictKeysRes.value.json();
+            const d1List = d1Json.channels || d1Json || [];
+            if (Array.isArray(d1List)) {
+              d1List.forEach(c => {
+                const id = String(c.id || c.channel_id || "");
+                const name = String(c.name || "").toLowerCase();
+                const kId = c.keyId || c.key_id || c.clearkey_id;
+                const k = c.key || c.clearkey_hex;
+                
+                if (kId && k && kId !== "null" && k !== "null") {
+                  if (id) keysDict.set(id, { keyId: kId, key: k });
+                  if (name) keysDict.set(name, { keyId: kId, key: k }); // Fallback matching
+                }
+              });
+            }
+          } catch (e) { console.error("Keys Dict Error", e); }
+        }
+
+        // C) Setup URL Dictionary (Custom Cookies)
+        const urlsDict = new Map();
+        if (dictUrlsRes.status === 'fulfilled') {
+          try {
+            const d2Json = await dictUrlsRes.value.json();
+            const parseResults = (results, isFailed) => {
+              if (Array.isArray(results)) {
+                results.forEach(item => {
+                  const id = String(item.channel_id || "");
+                  const name = String(item.channel_name || "").toLowerCase();
+                  const finalUrl = isFailed ? item.error_details?.final_url : item.result_details?.final_url;
+                  if (finalUrl) {
+                    if (id) urlsDict.set(id, finalUrl);
+                    if (name) urlsDict.set(name, finalUrl);
+                  }
+                });
+              }
+            };
+            if (d2Json) {
+              parseResults(d2Json.failed_results, true);
+              parseResults(d2Json.successful_results, false);
+            }
+          } catch (e) { console.error("URLs Dict Error", e); }
+        }
+
+        // D) Process Standard Channels
+        let standardData = [];
+        if (standardRes.status === 'fulfilled') {
+          try {
+            standardData = await standardRes.value.json();
+          } catch (e) { console.error("Standard Fetch Error", e); }
+        }
+
+        // E) Process Premium Channels
         let premiumData = [];
-        try {
-          const premRes = await fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${new Date().getTime()}`);
-          const premJson = await premRes.json();
-          if (premJson && premJson.channels) {
-            premiumData = premJson.channels.map(c => {
-              let logoName = c.id; 
-              const match = c.stream_url.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
-              if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
-              return {
-                name: c.name, url: c.stream_url, keyId: c.key_id, key: c.key, cookie: c.cookie,
-                category: 'Premium', logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png`
-              };
-            });
-          }
-        } catch (e) { console.error("Premium Fetch Error", e); }
+        if (premRes.status === 'fulfilled') {
+          try {
+            const premJson = await premRes.value.json();
+            if (premJson && premJson.channels) {
+              premiumData = premJson.channels.map(c => {
+                let logoName = c.id; 
+                const match = c.stream_url?.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
+                if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
+                return {
+                  id: String(c.id || ""),
+                  name: c.name, 
+                  url: c.stream_url, 
+                  keyId: c.key_id, 
+                  key: c.key, 
+                  cookie: c.cookie,
+                  category: 'Premium', 
+                  logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png`
+                };
+              });
+            }
+          } catch (e) { console.error("Premium Fetch Error", e); }
+        }
 
         const customChannels = [
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
@@ -150,7 +225,34 @@ export default function PerfectPlayerUI() {
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
         ];
 
-        const combined = [...premiumData, ...customChannels, ...standardData];
+        // Combine everything
+        const rawCombined = [...premiumData, ...customChannels, ...standardData];
+
+        // F) Apply Fixes via Map Filters
+        const combined = rawCombined.map(c => {
+          const cid = String(c.id || c.channel_id || "");
+          const cname = String(c.name || "").toLowerCase();
+          
+          // Normalize internal properties
+          if (c.stream_url && !c.url) c.url = c.stream_url;
+          if (c.key_id && !c.keyId) c.keyId = c.key_id;
+
+          // 1. Fix URLs via URL Dictionary
+          const overrideUrl = urlsDict.get(cid) || urlsDict.get(cname);
+          if (overrideUrl) c.url = overrideUrl;
+
+          // 2. Fix Missing/Null Keys via Keys Dictionary
+          const needsKey = !c.keyId || c.keyId === "null" || c.keyId === "" || !c.key || c.key === "null" || c.key === "";
+          if (needsKey) {
+            const fixedKeys = keysDict.get(cid) || keysDict.get(cname);
+            if (fixedKeys) {
+              c.keyId = fixedKeys.keyId;
+              c.key = fixedKeys.key;
+            }
+          }
+          return c;
+        });
+
         setChannels(combined);
 
         // Map & Sort Categories
@@ -199,11 +301,26 @@ export default function PerfectPlayerUI() {
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+        
         if (isManifest || isSegment) {
           const currentChannel = activeChannelRef.current;
-          const currentToken = currentChannel?.cookie ? currentChannel.cookie : tokenRef.current;
+          if (!currentChannel || !currentChannel.url) return;
+          
           let uri = request.uris[0];
           
+          // A) Handle special Dictionary 2 URLs that come with their own token
+          if (currentChannel.url.includes('__hdnea__=')) {
+              // Automatically extract and append the specific channel's HDNEA token during segment fetch
+              const tokenMatch = currentChannel.url.match(/(__hdnea__=[^&]+)/);
+              if (tokenMatch && !uri.includes('__hdnea__=')) {
+                  const sep = uri.includes('?') ? '&' : '?';
+                  request.uris[0] = uri + sep + tokenMatch[1];
+              }
+              return; // Crucial: Stop here so global cookie isn't appended on top
+          }
+
+          // B) Handle standard normal channels using global constant cookie
+          const currentToken = currentChannel.cookie ? currentChannel.cookie : tokenRef.current;
           if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
              const sep = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
@@ -235,6 +352,7 @@ export default function PerfectPlayerUI() {
       await player.unload();
       let drmConfig = { clearKeys: {} };
       
+      // Inject dict-fixed keys if successfully matched and present
       if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
         drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
       }
@@ -302,7 +420,6 @@ export default function PerfectPlayerUI() {
       if (activeCategory === 'All') return true;
       if (activeCategory === 'Favorites') return favorites.includes(c.name);
       
-      // Sports Category: Show regular sports OR premium channels containing "sport"
       if (activeCategory === 'Sports') {
         return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
       }
@@ -320,12 +437,11 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeChannel]);
 
-  // Handle Selection (Saves to Last Played)
+  // Handle Selection
   const handleChannelSelect = useCallback((channel) => {
     setActiveChannel(channel);
     setSearchQuery('');
     
-    // Save as Continue Watching
     setLastPlayed(channel);
     localStorage.setItem('last_played_8481', JSON.stringify(channel));
   }, []);
@@ -412,11 +528,10 @@ export default function PerfectPlayerUI() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
               <Loader2 className="animate-spin text-pink-500" size={36} />
-              <p className="tracking-widest text-xs font-semibold uppercase">Conecting to Live8481</p>
+              <p className="tracking-widest text-xs font-semibold uppercase">Connecting to Live8481</p>
             </div>
           ) : (
             <>
-              {/* CONTINUE WATCHING SECTION */}
               {activeCategory === 'All' && !searchQuery && lastPlayed && (
                 <div className="mb-6 bg-[#0a182b]/50 p-3 rounded-2xl border border-blue-400/5">
                   <h2 className="text-blue-200/80 text-[11px] font-bold mb-3 uppercase tracking-widest flex items-center gap-2">
@@ -428,7 +543,6 @@ export default function PerfectPlayerUI() {
                 </div>
               )}
 
-              {/* MAIN GRID */}
               <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
                 {filteredChannels.length > 0 ? (
                   filteredChannels.map((channel, idx) => (
@@ -457,7 +571,6 @@ export default function PerfectPlayerUI() {
                 <div className="text-blue-50 text-sm md:text-base font-semibold truncate max-w-[150px] md:max-w-none">
                   {activeChannel.name}
                 </div>
-                {/* FAVORITES HEART BUTTON */}
                 <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
                   <Heart size={18} className={favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
                 </button>
