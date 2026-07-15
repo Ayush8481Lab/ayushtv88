@@ -56,9 +56,7 @@ ${base}/live_360p/chunks.m3u8
 #EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=854x480,CODECS="avc1.4d401f,mp4a.40.2"
 ${base}/live_480p/chunks.m3u8
 #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
-${base}/live_720p/chunks.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1.4d4028,mp4a.40.2"
-${base}/live_1080p/chunks.m3u8`;
+${base}/live_720p/chunks.m3u8`;
 };
 
 // Required Category Order
@@ -126,7 +124,7 @@ export default function PerfectPlayerUI() {
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
         if (extractedCookie) tokenRef.current = extractedCookie;
 
-        const standardRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
+        const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
         const standardData = await standardRes.json();
 
         let premiumData = [];
@@ -414,7 +412,7 @@ export default function PerfectPlayerUI() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
               <Loader2 className="animate-spin text-pink-500" size={36} />
-              <p className="tracking-widest text-xs font-semibold uppercase">Loading Engine...</p>
+              <p className="tracking-widest text-xs font-semibold uppercase">Conecting to Live8481</p>
             </div>
           ) : (
             <>
