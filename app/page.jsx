@@ -2,58 +2,58 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, X, ArrowLeft, PlayCircle, Activity } from 'lucide-react';
+import { Search, X, ArrowLeft, PlayCircle, Activity, Tv } from 'lucide-react';
 
 export default function App() {
-  // SSR Safety Check
+  // ==============================================================
+  // 1. EXACT STATE & REFS FROM YOUR WORKING CODE
+  // ==============================================================
   const [isMounted, setIsMounted] = useState(false);
-
-  // Data States
   const [channels, setChannels] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // UI States
   const [activeChannel, setActiveChannel] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // New UI specific states
+  const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
-  // Refs
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const uiRef = useRef(null);
   const tokenRef = useRef("");
 
-  // 1. Mark as Mounted
+  // ==============================================================
+  // 2. EXACT API FETCH LOGIC FROM YOUR WORKING CODE
+  // ==============================================================
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 2. Fetch API Data (EXACT LOGIC FROM YOUR WORKING CODE)
   useEffect(() => {
     if (!isMounted) return;
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Token
+        // Fetch Token exactly as working code
         const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
         const tokenData = await tokenRes.json();
+        
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
         if (extractedCookie) {
           tokenRef.current = extractedCookie;
         }
 
-        // Fetch Channels
+        // Fetch Channels exactly as working code
         const channelRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
         const channelData = await channelRes.json();
         
-        // Extract Categories
+        // Setup UI Categories
         const uniqueCategories = ['All', ...Array.from(new Set(channelData.map(c => c.category).filter(Boolean)))];
-        
-        setChannels(channelData);
         setCategories(uniqueCategories);
+        setChannels(channelData);
         setIsLoading(false);
       } catch (error) {
         console.error("API Fetch Error:", error);
@@ -64,17 +64,18 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player (EXACT LOGIC FROM YOUR WORKING CODE)
+  // ==============================================================
+  // 3. EXACT PLAYER INITIALIZATION FROM YOUR WORKING CODE
+  // ==============================================================
   useEffect(() => {
-    // We now initialize regardless of activeChannel so the player is ready immediately
-    if (!isMounted || !videoRef.current || !containerRef.current || playerRef.current) return;
+    if (!isMounted || !videoRef.current || playerRef.current) return;
 
     const initPlayer = async () => {
       const shaka = await import('shaka-player/dist/shaka-player.ui');
       shaka.polyfill.installAll();
 
       if (!shaka.Player.isBrowserSupported()) {
-        console.error("Browser not supported!");
+        console.error("Browser not supported for Shaka Player.");
         return;
       }
 
@@ -90,7 +91,6 @@ export default function App() {
         ]
       });
 
-      // OUTGOING FILTER: EXACTLY as it is in your working code
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -99,7 +99,6 @@ export default function App() {
           const currentToken = tokenRef.current;
           let uri = request.uris[0];
 
-          // Append token if not present
           if (currentToken && !uri.includes('hdnea')) {
              const separator = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
@@ -124,25 +123,27 @@ export default function App() {
     };
   }, [isMounted]);
 
-  // 4. Handle Video Playback (EXACT LOGIC FROM YOUR WORKING CODE)
+  // ==============================================================
+  // 4. EXACT PLAYBACK LOGIC FROM YOUR WORKING CODE
+  // ==============================================================
   useEffect(() => {
     if (!activeChannel || !playerRef.current) return;
 
     const playStream = async () => {
       const player = playerRef.current;
+
       try {
         await player.unload();
         
         let drmConfig = { clearKeys: {} };
         
-        // Exactly matches your working code string checks
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
 
         player.configure({
           drm: drmConfig,
-          manifest: { dash: { ignoreDrmInfo: false } },
+          manifest: { dash: { ignoreDrmInfo: false } }, 
           streaming: { bufferingGoal: 5 }
         });
 
@@ -155,9 +156,11 @@ export default function App() {
     playStream();
   }, [activeChannel]);
 
+  // ==============================================================
+  // UI RENDER (Replaces Network Logs with Channel Details)
+  // ==============================================================
   if (!isMounted) return <div className="h-screen bg-black" />;
 
-  // Data Filtering
   const filteredChannels = channels.filter(c => {
     const matchCategory = activeCategory === 'All' || c.category === activeCategory;
     const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -184,10 +187,10 @@ export default function App() {
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden selection:bg-cyan-500/30">
+      <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden">
         
-        {/* TOP NAVIGATION HEADER */}
-        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-30 flex-none shadow-md">
+        {/* NEW TOP NAVIGATION HEADER */}
+        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-20 flex-none shadow-md">
           <div className="flex items-center gap-2">
             {activeChannel && (
               <button 
@@ -202,7 +205,7 @@ export default function App() {
             </h1>
           </div>
           
-          {/* Top Right Search Engine */}
+          {/* Top Right Search */}
           <div className="flex items-center">
             {searchOpen ? (
               <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1 md:py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
@@ -227,14 +230,17 @@ export default function App() {
           </div>
         </header>
 
-        {/* MAIN BODY AREA - Absolute sliding architecture fixes the Shaka hidden DOM bug! */}
-        <main className="flex flex-1 overflow-hidden relative w-full h-full">
+        {/* MAIN BODY SPLIT (Exact layout structure from working code) */}
+        <div className="flex flex-1 overflow-hidden">
           
           {/* LEFT PANE: Channels & Categories */}
-          <div className={`absolute md:relative flex flex-col bg-[#0f0f0f] border-r border-[#222] z-20 transition-transform duration-300 w-full md:w-[320px] lg:w-[380px] h-full
-              ${activeChannel ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}`}
+          <aside className={`flex flex-col bg-[#111] border-r border-[#222] transition-all duration-300
+              ${activeChannel 
+                ? 'hidden md:flex md:w-[320px] lg:w-[380px]' 
+                : 'flex w-full'
+              }`}
           >
-            {/* Horizontal Categories Menu */}
+            {/* Category Chips */}
             <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2 bg-[#111] shadow-md flex-none border-b border-[#222]">
               {categories.map(cat => (
                 <button
@@ -251,7 +257,7 @@ export default function App() {
               ))}
             </div>
 
-            {/* High Density Channels Grid */}
+            {/* High Density Grid */}
             <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-3">
               {filteredChannels.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-gray-600">
@@ -259,87 +265,75 @@ export default function App() {
                   <p className="text-sm">No channels found</p>
                 </div>
               ) : (
-                <div className={`${activeChannel 
-                  ? 'flex flex-col gap-2' // Vertical list when video is playing on Desktop
-                  : 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2 md:gap-3' // Many rows when fullscreen
-                }`}>
+                <div className={`grid gap-2 md:gap-3 ${activeChannel ? 'grid-cols-2 md:grid-cols-2' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10'}`}>
                   {filteredChannels.map(channel => (
                     <div 
                       key={channel.id}
                       onClick={() => setActiveChannel(channel)}
-                      className={`cursor-pointer rounded-lg overflow-hidden transition-all duration-200 group
+                      className={`cursor-pointer rounded-lg flex flex-col p-1.5 md:p-2 overflow-hidden transition-all duration-200 group
                         ${activeChannel?.id === channel.id 
                             ? 'border border-cyan-500 bg-cyan-900/20 shadow-[inset_3px_0_0_#06b6d4]' 
-                            : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}
-                        ${activeChannel ? 'flex items-center p-2 gap-3' : 'flex flex-col p-1.5 md:p-2'}`
+                            : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}`
                       }
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img 
                         src={channel.logo} 
                         onError={(e) => { e.target.src = 'https://via.placeholder.com/100?text=TV' }}
-                        className={`${activeChannel ? 'w-16 h-12 object-contain bg-black rounded' : 'w-full aspect-video object-cover bg-black rounded opacity-90 group-hover:opacity-100 transition-opacity'}`}
+                        className="w-full aspect-video object-cover bg-black rounded opacity-90 group-hover:opacity-100 transition-opacity"
                       />
-                      <div className={`flex-1 min-w-0 ${activeChannel ? 'py-0' : 'pt-2'}`}>
-                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-sm' : 'text-[10px] md:text-[11px]'}`}>{channel.name}</h3>
-                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-xs' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
+                      <div className="flex-1 min-w-0 pt-2">
+                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-[10px] md:text-[11px]' : 'text-[10px] md:text-xs'}`}>{channel.name}</h3>
+                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-[9px] md:text-[10px]' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </div>
+          </aside>
 
-          {/* RIGHT PANE: Video Player & Related Channels */}
-          {/* This panel is NEVER display: none. It always exists so Shaka binds perfectly! */}
-          <div className={`absolute md:relative flex flex-col bg-black overflow-y-auto scrollbar-hide z-10 transition-transform duration-300 w-full flex-1 h-full
-              ${!activeChannel ? 'translate-x-full md:translate-x-0' : 'translate-x-0'}`}
-          >
-            {/* Desktop Placeholder overlay when no channel is selected */}
-            {!activeChannel && (
-              <div className="hidden md:flex absolute inset-0 flex-col items-center justify-center bg-[#0a0a0a] z-20 text-gray-500">
-                <PlayCircle size={64} className="mb-4 opacity-20" />
-                <p className="text-lg tracking-wider font-light">Select a stream to begin playback</p>
-              </div>
-            )}
+          {/* RIGHT PANE: EXACTLY like "Main Area" in your working code */}
+          <main className={`flex-1 flex flex-col bg-black ${!activeChannel ? 'hidden md:flex' : 'flex'}`}>
             
-            {/* Shaka Video Player Container */}
-            <div className="w-full bg-black relative shadow-2xl border-b border-[#222]">
-              <div ref={containerRef} className="mx-auto w-full max-w-6xl aspect-video relative z-10 bg-black">
-                <video ref={videoRef} className="w-full h-full object-contain bg-black" autoPlay playsInline />
+            {/* 70% HEIGHT: VIDEO AREA */}
+            <div className="flex-1 relative flex items-center justify-center bg-gradient-to-b from-gray-900 to-black">
+              {!activeChannel && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-0">
+                  <PlayCircle size={64} className="mb-4 opacity-20" />
+                  <p className="text-lg tracking-wider font-light">Select a stream to begin playback</p>
+                </div>
+              )}
+              
+              {/* This exact video block structure is from your working file! */}
+              <div 
+                ref={containerRef} 
+                className={`w-full max-w-5xl aspect-video shadow-2xl relative z-10 ${!activeChannel ? 'hidden' : 'block'}`}
+              >
+                <video 
+                  ref={videoRef} 
+                  className="w-full h-full object-contain bg-black" 
+                  autoPlay 
+                />
               </div>
             </div>
 
-            {activeChannel && (
-              <div className="max-w-6xl mx-auto w-full">
-                
-                {/* Active Channel Title Area */}
-                <div className="p-4 md:p-6 flex items-start gap-3 md:gap-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={activeChannel.logo} className="w-14 h-14 md:w-16 md:h-16 rounded-xl object-contain bg-white/5 border border-gray-800 p-1 shadow-lg" />
-                  <div>
-                    <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">{activeChannel.name}</h2>
-                    <span className="inline-block mt-1.5 px-2.5 py-0.5 bg-gray-900 border border-gray-700 text-cyan-400 text-[10px] font-semibold rounded-full uppercase tracking-wider shadow-sm">
-                      {activeChannel.category}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Related Channels Slider (More in this category) */}
-                {relatedChannels.length > 0 && (
-                  <div className="mt-1 px-4 md:px-6 pb-10">
-                    <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3 flex items-center gap-2">
-                      More in {activeChannel.category}
-                    </h3>
+            {/* 30% HEIGHT: REPLACES NETWORK LOGS WITH BEAUTIFUL UI */}
+            <div className="h-[35vh] md:h-[30vh] bg-[#050505] border-t-2 border-cyan-900/50 flex flex-col">
+              <div className="p-2 border-b border-[#111] bg-[#0a0a0a] flex items-center gap-2 text-xs text-gray-400 uppercase tracking-widest font-semibold">
+                <Tv size={14} className="text-cyan-500" />
+                {activeChannel ? `${activeChannel.name} • ${activeChannel.category}` : 'Channel Information'}
+              </div>
+              
+              <div className="flex-1 p-4 overflow-y-auto scrollbar-hide">
+                {activeChannel ? (
+                  <>
+                    <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3">More channels in this category</h3>
                     <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 snap-x">
                       {relatedChannels.map(channel => (
                         <div 
                           key={channel.id}
-                          onClick={() => {
-                            setActiveChannel(channel);
-                            window.scrollTo({ top: 0, behavior: 'smooth' }); 
-                          }}
+                          onClick={() => setActiveChannel(channel)}
                           className="snap-start flex-none w-32 md:w-40 cursor-pointer group"
                         >
                           <div className="w-full aspect-video rounded-lg overflow-hidden border border-gray-800 bg-gray-900 group-hover:border-cyan-500 transition-all relative">
@@ -353,12 +347,17 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                  </>
+                ) : (
+                  <div className="text-gray-600 text-sm h-full flex items-center justify-center">
+                    Waiting for engine selection...
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        </main>
+            </div>
+
+          </main>
+        </div>
       </div>
     </>
   );
