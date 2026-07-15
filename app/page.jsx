@@ -5,11 +5,74 @@ import 'shaka-player/dist/controls.css';
 import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
 
 // ==========================================
-// OPTIMIZED CARD COMPONENT (Hotstar/Jio Style Lazy Loading)
+// INDEXED-DB LOGO CACHE MANAGER
+// ==========================================
+const DB_NAME = 'LogoCacheDB';
+const STORE_NAME = 'logos';
+
+const initDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const getCachedLogo = async (url) => {
+  try {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(url);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { return null; }
+};
+
+const setCachedLogo = async (url, blob) => {
+  try {
+    const db = await initDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(blob, url);
+  } catch (e) {}
+};
+
+// ==========================================
+// OPTIMIZED CARD COMPONENT (With IDB Caching)
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+  const [imgSrc, setImgSrc] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadImg = async () => {
+      if (!channel.logo) return;
+      try {
+        const cachedBlob = await getCachedLogo(channel.logo);
+        if (cachedBlob) {
+          if (isMounted) setImgSrc(URL.createObjectURL(cachedBlob));
+        } else {
+          // Fallback immediately, then cache in background for next time
+          if (isMounted) setImgSrc(channel.logo);
+          fetch(channel.logo)
+            .then(r => r.blob())
+            .then(blob => setCachedLogo(channel.logo, blob))
+            .catch(() => {});
+        }
+      } catch (e) {
+        if (isMounted) setImgSrc(channel.logo);
+      }
+    };
+    loadImg();
+    return () => { isMounted = false; };
+  }, [channel.logo]);
 
   return (
     <button
@@ -27,17 +90,19 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
         </div>
       )}
       
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={channel.logo}
-        alt="logo"
-        loading="lazy"
-        decoding="async"
-        onLoad={() => setLoaded(true)}
-        onError={() => setError(true)}
-        className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 
-          ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
-      />
+      {imgSrc && (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={imgSrc}
+          alt="logo"
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+          className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 
+            ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
+        />
+      )}
     </button>
   );
 });
@@ -83,18 +148,16 @@ export default function PerfectPlayerUI() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   
-  // Zoom State
+  // Persistent Auto Fit Zoom State
   const [isZoomed, setIsZoomed] = useState(false);
 
   // Refs
   const videoRef = useRef(null);
   const containerRef = useRef(null);
-  const playerRef = useRef(null);
-  const uiRef = useRef(null);
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
 
-  // 1. Mark as Mounted, Load LocalStorage & Setup Network & Android Back Button Logic
+  // 1. Mount, Network, Configs, & Viewport Setup
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
@@ -102,18 +165,31 @@ export default function PerfectPlayerUI() {
       window.addEventListener('online', () => setIsOffline(false));
       window.addEventListener('offline', () => setIsOffline(true));
 
-      // Load Storage
+      // Inject viewport-fit=cover so Safe Area Notches can be properly identified
+      let viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (viewportMeta && !viewportMeta.content.includes("viewport-fit=cover")) {
+        viewportMeta.content += ", viewport-fit=cover";
+      } else if (!viewportMeta) {
+        const meta = document.createElement('meta');
+        meta.name = "viewport";
+        meta.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+        document.head.appendChild(meta);
+      }
+
+      // Load Storages
       const storedFavs = JSON.parse(localStorage.getItem('fav_channels_8481') || '[]');
       setFavorites(storedFavs);
       
       const storedLast = JSON.parse(localStorage.getItem('last_played_8481') || 'null');
       setLastPlayed(storedLast);
 
-      // Listen for hardware/browser back button
-      const handlePopState = (e) => {
-        if (activeChannelRef.current) {
-          setActiveChannel(null);
-        }
+      // Load Persistent Zoom Setting
+      const storedZoom = localStorage.getItem('auto_fit_8481');
+      if (storedZoom !== null) setIsZoomed(storedZoom === 'true');
+
+      // Android Back Button Logic
+      const handlePopState = () => {
+        if (activeChannelRef.current) setActiveChannel(null);
       };
       window.addEventListener('popstate', handlePopState);
       return () => window.removeEventListener('popstate', handlePopState);
@@ -122,11 +198,9 @@ export default function PerfectPlayerUI() {
 
   useEffect(() => {
     activeChannelRef.current = activeChannel;
-    // Reset zoom whenever a new channel is selected
-    setIsZoomed(false);
   }, [activeChannel]);
 
-  // 2. Fetch Core APIs (Including the New Dictionary APIs)
+  // 2. Fetch Core APIs (Dictionaries & Channels)
   useEffect(() => {
     if (!isMounted || isOffline) return;
 
@@ -135,16 +209,14 @@ export default function PerfectPlayerUI() {
         setIsLoading(true);
         const ts = new Date().getTime();
 
-        // Run all API fetches concurrently for maximum speed
         const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes] = await Promise.allSettled([
           fetch('https://allinonereborn2.online/jstrweb2/cookies.json'),
           fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${ts}`),
           fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${ts}`),
-          fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`), // Key Dictionary
-          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`) // URL Dictionary
+          fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`),
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`)
         ]);
 
-        // A) Process Token
         if (tokenRes.status === 'fulfilled') {
           try {
             const tokenData = await tokenRes.value.json();
@@ -153,7 +225,6 @@ export default function PerfectPlayerUI() {
           } catch (e) { console.error("Token Fetch Error", e); }
         }
 
-        // B) Setup Keys Dictionary
         const keysDict = new Map();
         if (dictKeysRes.status === 'fulfilled') {
           try {
@@ -168,14 +239,13 @@ export default function PerfectPlayerUI() {
                 
                 if (kId && k && kId !== "null" && k !== "null") {
                   if (id) keysDict.set(id, { keyId: kId, key: k });
-                  if (name) keysDict.set(name, { keyId: kId, key: k }); // Fallback matching
+                  if (name) keysDict.set(name, { keyId: kId, key: k });
                 }
               });
             }
           } catch (e) { console.error("Keys Dict Error", e); }
         }
 
-        // C) Setup URL Dictionary (Custom Cookies)
         const urlsDict = new Map();
         if (dictUrlsRes.status === 'fulfilled') {
           try {
@@ -200,15 +270,12 @@ export default function PerfectPlayerUI() {
           } catch (e) { console.error("URLs Dict Error", e); }
         }
 
-        // D) Process Standard Channels
         let standardData = [];
         if (standardRes.status === 'fulfilled') {
-          try {
-            standardData = await standardRes.value.json();
-          } catch (e) { console.error("Standard Fetch Error", e); }
+          try { standardData = await standardRes.value.json(); } 
+          catch (e) { console.error("Standard Fetch Error", e); }
         }
 
-        // E) Process Premium Channels
         let premiumData = [];
         if (premRes.status === 'fulfilled') {
           try {
@@ -219,14 +286,8 @@ export default function PerfectPlayerUI() {
                 const match = c.stream_url?.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
                 if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
                 return {
-                  id: String(c.id || ""),
-                  name: c.name, 
-                  url: c.stream_url, 
-                  keyId: c.key_id, 
-                  key: c.key, 
-                  cookie: c.cookie,
-                  category: 'Premium', 
-                  logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png`
+                  id: String(c.id || ""), name: c.name, url: c.stream_url, keyId: c.key_id, key: c.key, cookie: c.cookie,
+                  category: 'Premium', logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png`
                 };
               });
             }
@@ -239,23 +300,18 @@ export default function PerfectPlayerUI() {
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
         ];
 
-        // Combine everything
         const rawCombined = [...premiumData, ...customChannels, ...standardData];
 
-        // F) Apply Fixes via Map Filters
         const combined = rawCombined.map(c => {
           const cid = String(c.id || c.channel_id || "");
           const cname = String(c.name || "").toLowerCase();
           
-          // Normalize internal properties
           if (c.stream_url && !c.url) c.url = c.stream_url;
           if (c.key_id && !c.keyId) c.keyId = c.key_id;
 
-          // 1. Fix URLs via URL Dictionary
           const overrideUrl = urlsDict.get(cid) || urlsDict.get(cname);
           if (overrideUrl) c.url = overrideUrl;
 
-          // 2. Fix Missing/Null Keys via Keys Dictionary
           const needsKey = !c.keyId || c.keyId === "null" || c.keyId === "" || !c.key || c.key === "null" || c.key === "";
           if (needsKey) {
             const fixedKeys = keysDict.get(cid) || keysDict.get(cname);
@@ -269,10 +325,8 @@ export default function PerfectPlayerUI() {
 
         setChannels(combined);
 
-        // Map & Sort Categories
         const allCats = combined.map(c => c.category || c.group || c.group_title || 'Others');
         const uniqueCats = new Set(allCats);
-        
         const finalCategories = [...CATEGORY_ORDER];
         CATEGORY_ORDER.forEach(cat => uniqueCats.delete(cat));
         uniqueCats.forEach(cat => finalCategories.push(cat));
@@ -288,156 +342,149 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. Initialize Shaka Player
+  // 3. COMPLETE FRESH SESSION SHAKA INITIALIZER (Runs only when a channel is active)
   useEffect(() => {
-    if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
+    if (!isMounted || isOffline || !activeChannel || !videoRef.current || !containerRef.current) return;
 
-    const initPlayer = async () => {
-      const shaka = await import('shaka-player/dist/shaka-player.ui');
-      shaka.polyfill.installAll();
+    let player = null;
+    let ui = null;
 
-      if (!shaka.Player.isBrowserSupported()) return;
+    const initPlayerSession = async () => {
+      setPlayerError(null);
+      try {
+        const shaka = await import('shaka-player/dist/shaka-player.ui');
+        shaka.polyfill.installAll();
 
-      const video = videoRef.current;
-      const container = containerRef.current;
-      const player = new shaka.Player(video);
-      
-      const ui = new shaka.ui.Overlay(player, container, video);
-      ui.configure({
-        controlPanelElements: ['play_pause', 'time_and_duration', 'spacer', 'mute', 'volume', 'picture_in_picture', 'quality', 'fullscreen']
-      });
+        if (!shaka.Player.isBrowserSupported()) return;
 
-      player.addEventListener('error', (e) => {
-        console.error('Shaka Player Error', e.detail);
-        setPlayerError("Stream unavailable or DRM error. Please try another channel.");
-      });
-
-      player.getNetworkingEngine().registerRequestFilter((type, request) => {
-        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
-        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+        player = new shaka.Player(videoRef.current);
+        ui = new shaka.ui.Overlay(player, containerRef.current, videoRef.current);
         
-        if (isManifest || isSegment) {
-          const currentChannel = activeChannelRef.current;
-          if (!currentChannel || !currentChannel.url) return;
-          
-          let uri = request.uris[0];
-          
-          // A) Handle special Dictionary 2 URLs that come with their own token
-          if (currentChannel.url.includes('__hdnea__=')) {
-              // Automatically extract and append the specific channel's HDNEA token during segment fetch
-              const tokenMatch = currentChannel.url.match(/(__hdnea__=[^&]+)/);
-              if (tokenMatch && !uri.includes('__hdnea__=')) {
-                  const sep = uri.includes('?') ? '&' : '?';
-                  request.uris[0] = uri + sep + tokenMatch[1];
-              }
-              return; // Crucial: Stop here so global cookie isn't appended on top
-          }
-
-          // B) Handle standard normal channels using global constant cookie
-          const currentToken = currentChannel.cookie ? currentChannel.cookie : tokenRef.current;
-          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-             const sep = uri.includes('?') ? '&' : '?';
-             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-             request.uris[0] = uri + sep + cleanToken;
-          }
-        }
-      });
-
-      playerRef.current = player;
-      uiRef.current = ui;
-    };
-
-    initPlayer();
-
-    return () => {
-      if (uiRef.current) uiRef.current.destroy();
-      if (playerRef.current) playerRef.current.destroy();
-    };
-  }, [isMounted, isOffline]);
-
-  // 4. Handle Channel Playback
-  const executePlayStream = useCallback(async () => {
-    if (!playerRef.current || !activeChannel) return;
-    const player = playerRef.current;
-    
-    setPlayerError(null);
-
-    try {
-      await player.unload();
-      let drmConfig = { clearKeys: {} };
-      
-      // Inject dict-fixed keys if successfully matched and present
-      if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
-        drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
-      }
-
-      player.configure({
-        drm: drmConfig,
-        manifest: { dash: { ignoreDrmInfo: false } },
-        streaming: { bufferingGoal: 5 }
-      });
-
-      let finalUrl = activeChannel.url;
-      let forceMimeType = undefined;
-
-      if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
-         const masterStr = buildMasterPlaylist(finalUrl);
-         const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
-         finalUrl = URL.createObjectURL(blob);
-         forceMimeType = 'application/x-mpegURL'; 
-      }
-
-      if (forceMimeType) await player.load(finalUrl, null, forceMimeType);
-      else await player.load(finalUrl);
-
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new window.MediaMetadata({
-          title: activeChannel.name,
-          artist: 'Ayush@8481', 
-          artwork: [{ src: activeChannel.logo, sizes: '512x512' }]
+        ui.configure({
+          controlPanelElements: ['play_pause', 'time_and_duration', 'spacer', 'mute', 'volume', 'picture_in_picture', 'quality', 'fullscreen']
         });
+
+        player.addEventListener('error', (e) => {
+          console.error('Shaka Player Error', e.detail);
+          setPlayerError("Stream unavailable or DRM error. Please try another channel.");
+        });
+
+        player.getNetworkingEngine().registerRequestFilter((type, request) => {
+          const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+          const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+          
+          if (isManifest || isSegment) {
+            let uri = request.uris[0];
+            if (activeChannel.url.includes('__hdnea__=')) {
+                const tokenMatch = activeChannel.url.match(/(__hdnea__=[^&]+)/);
+                if (tokenMatch && !uri.includes('__hdnea__=')) {
+                    const sep = uri.includes('?') ? '&' : '?';
+                    request.uris[0] = uri + sep + tokenMatch[1];
+                }
+                return; 
+            }
+
+            const currentToken = activeChannel.cookie ? activeChannel.cookie : tokenRef.current;
+            if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+               const sep = uri.includes('?') ? '&' : '?';
+               const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+               request.uris[0] = uri + sep + cleanToken;
+            }
+          }
+        });
+
+        let drmConfig = { clearKeys: {} };
+        if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
+          drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
+        }
+
+        player.configure({
+          drm: drmConfig,
+          manifest: { dash: { ignoreDrmInfo: false } },
+          streaming: { bufferingGoal: 5 }
+        });
+
+        let finalUrl = activeChannel.url;
+        let forceMimeType = undefined;
+
+        if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
+           const masterStr = buildMasterPlaylist(finalUrl);
+           const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
+           finalUrl = URL.createObjectURL(blob);
+           forceMimeType = 'application/x-mpegURL'; 
+        }
+
+        if (forceMimeType) await player.load(finalUrl, null, forceMimeType);
+        else await player.load(finalUrl);
+
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = new window.MediaMetadata({
+            title: activeChannel.name,
+            artist: 'Ayush@8481', 
+            artwork: [{ src: activeChannel.logo, sizes: '512x512' }]
+          });
+        }
+      } catch (error) {
+        console.error("Playback error:", error);
+        setPlayerError("Failed to fetch stream data. Ensure your connection is stable.");
       }
+    };
 
-    } catch (error) {
-      console.error("Playback error:", error);
-      setPlayerError("Failed to fetch stream data. Ensure your connection is stable.");
+    initPlayerSession();
+
+    // CLEANUP: Completely destroys instance on Back Button to guarantee "Like New Session"
+    return () => {
+      if (ui) ui.destroy();
+      if (player) player.destroy();
+    };
+  }, [activeChannel, isMounted, isOffline]);
+
+  // Handle Selection & Push State
+  const handleChannelSelect = useCallback((channel) => {
+    if (!activeChannelRef.current && typeof window !== 'undefined') {
+      window.history.pushState({ playerOpen: true }, '');
+    } else if (typeof window !== 'undefined') {
+      window.history.replaceState({ playerOpen: true }, '');
     }
-  }, [activeChannel]);
+    setActiveChannel(channel);
+    setSearchQuery('');
+    setLastPlayed(channel);
+    localStorage.setItem('last_played_8481', JSON.stringify(channel));
+  }, []);
 
-  useEffect(() => {
-    executePlayStream();
-    return () => { if (!activeChannel && playerRef.current) playerRef.current.unload(); }
-  }, [executePlayStream, activeChannel]);
+  const handleUiBack = () => {
+    if (window.history.state && window.history.state.playerOpen) {
+      window.history.back();
+    } else {
+      setActiveChannel(null);
+    }
+  };
 
-  // Favorites Toggle Logic
+  const toggleAutoFit = () => {
+    const nextState = !isZoomed;
+    setIsZoomed(nextState);
+    localStorage.setItem('auto_fit_8481', String(nextState));
+    document.cookie = `auto_fit_8481=${nextState}; path=/; max-age=31536000`;
+  };
+
   const toggleFavorite = () => {
     if (!activeChannel) return;
     const isFav = favorites.includes(activeChannel.name);
     let newFavs;
-    if (isFav) {
-      newFavs = favorites.filter(name => name !== activeChannel.name);
-    } else {
-      newFavs = [...favorites, activeChannel.name];
-    }
+    if (isFav) newFavs = favorites.filter(name => name !== activeChannel.name);
+    else newFavs = [...favorites, activeChannel.name];
     setFavorites(newFavs);
     localStorage.setItem('fav_channels_8481', JSON.stringify(newFavs));
   };
 
-  // Memos - Advanced Filtration
   const filteredChannels = useMemo(() => {
     return channels.filter(c => {
       const matchSearch = c.name?.toLowerCase().includes(searchQuery.toLowerCase());
       if (!matchSearch) return false;
-
       const cCat = c.category || c.group || c.group_title || 'Others';
-
       if (activeCategory === 'All') return true;
       if (activeCategory === 'Favorites') return favorites.includes(c.name);
-      
-      if (activeCategory === 'Sports') {
-        return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
-      }
-      
+      if (activeCategory === 'Sports') return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
       return cCat === activeCategory;
     });
   }, [channels, activeCategory, searchQuery, favorites]);
@@ -451,90 +498,46 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeChannel]);
 
-  // Handle Selection & Push State for Back button
-  const handleChannelSelect = useCallback((channel) => {
-    // Only push a new state if we are coming from the main screen,
-    // otherwise replace the state so back button takes us out directly.
-    if (!activeChannelRef.current && typeof window !== 'undefined') {
-      window.history.pushState({ playerOpen: true }, '');
-    } else if (typeof window !== 'undefined') {
-      window.history.replaceState({ playerOpen: true }, '');
-    }
-
-    setActiveChannel(channel);
-    setSearchQuery('');
-    
-    setLastPlayed(channel);
-    localStorage.setItem('last_played_8481', JSON.stringify(channel));
-  }, []);
-
-  // Handle Custom UI Back Action
-  const handleUiBack = () => {
-    if (window.history.state && window.history.state.playerOpen) {
-      window.history.back(); // Trigger popstate which closes player
-    } else {
-      setActiveChannel(null); // Fallback
-    }
-  };
-
   if (!isMounted) return <div className="h-screen w-screen bg-[#020813]" />;
 
-  // ----------------------------------------------------
-  // OFFLINE UI (Navy Theme)
-  // ----------------------------------------------------
   if (isOffline) {
     return (
       <div className="flex flex-col items-center justify-center h-[100dvh] w-full bg-[#020813] text-white">
         <WifiOff size={70} className="text-pink-500 mb-6 drop-shadow-[0_0_15px_rgba(236,72,153,0.5)] animate-pulse" />
-        <h1 className="text-2xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400 mb-2">
-          NO INTERNET
-        </h1>
-        <p className="text-blue-200/50 text-sm mb-8 text-center max-w-[250px] leading-relaxed">
-          Please check your network connection and try again.
-        </p>
-        <button onClick={() => { if(navigator.onLine) setIsOffline(false); }}
-          className="flex items-center gap-2 px-8 py-3 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-400/20 rounded-full font-bold tracking-widest transition-colors"
-        >
-          <RefreshCcw size={18} /> RETRY
-        </button>
+        <h1 className="text-2xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400 mb-2">NO INTERNET</h1>
+        <p className="text-blue-200/50 text-sm mb-8 text-center max-w-[250px] leading-relaxed">Please check your network connection and try again.</p>
+        <button onClick={() => { if(navigator.onLine) setIsOffline(false); }} className="flex items-center gap-2 px-8 py-3 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-400/20 rounded-full font-bold tracking-widest transition-colors"><RefreshCcw size={18} /> RETRY</button>
       </div>
     );
   }
 
-  // ----------------------------------------------------
-  // MAIN APP UI (Deep Navy Theme)
-  // ----------------------------------------------------
   return (
     <div className="flex h-[100dvh] w-full bg-[#020813] text-white font-sans overflow-hidden selection:bg-pink-500/30">
       
-      {/* FULLSCREEN NOTCH & CAMERA CUTOUT PROTECTION */}
+      {/* BULLETPROOF FULLSCREEN NOTCH PROTECTOR CSS */}
       <style dangerouslySetInnerHTML={{ __html: `
-        /* Prevents Shaka Player UI from hiding behind phone notches on long screens */
-        .shaka-video-container:fullscreen .shaka-bottom-controls,
-        .shaka-video-container:-webkit-full-screen .shaka-bottom-controls {
-          padding-left: max(35px, env(safe-area-inset-left)) !important;
-          padding-right: max(35px, env(safe-area-inset-right)) !important;
-          padding-bottom: max(20px, env(safe-area-inset-bottom)) !important;
+        /* Ensures controls dodge punch-holes natively via environment safe-areas */
+        .shaka-video-container:fullscreen .shaka-controls-container,
+        .shaka-video-container:-webkit-full-screen .shaka-controls-container {
+          padding-left: env(safe-area-inset-left, 20px) !important;
+          padding-right: env(safe-area-inset-right, 20px) !important;
+          padding-bottom: env(safe-area-inset-bottom, 15px) !important;
+          padding-top: env(safe-area-inset-top, 15px) !important;
           box-sizing: border-box !important;
-          width: 100% !important;
         }
         
-        /* Ensure video stays perfectly centered when Auto Fit (Zoom) is ON */
+        /* Video stays completely centered, cutting edges instead of faces */
         video.object-cover {
           object-position: center center !important;
         }
       `}} />
 
-      {/* SIDEBAR / MAIN GRID */}
-      <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 
-        ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
-        
+      {/* SIDEBAR */}
+      <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
         <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-blue-400/10 bg-[#0a182b]">
           <div className="flex items-center gap-2 text-pink-500">
             <Tv size={24} className="drop-shadow-[0_0_5px_rgba(236,72,153,0.5)]" />
-            <h1 className="text-lg md:text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400">
-              Live@8481
-            </h1>
+            <h1 className="text-lg md:text-xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400">Live@8481</h1>
           </div>
           <button onClick={() => setIsSearchOpen(!isSearchOpen)} className="p-2 rounded-full bg-blue-900/20 hover:bg-blue-900/40 transition-colors text-blue-200">
             {isSearchOpen ? <X size={20} /> : <Search size={20} />}
@@ -557,12 +560,9 @@ export default function PerfectPlayerUI() {
             {categories.map((cat) => (
               <button key={cat} onClick={() => setActiveCategory(cat)}
                 className={`whitespace-nowrap flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[13px] font-bold tracking-wider transition-colors duration-200 ${
-                  activeCategory === cat 
-                  ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' 
-                  : cat === 'Favorites'
-                  ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
-                  : cat === 'Premium' 
-                  ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                  activeCategory === cat ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' 
+                  : cat === 'Favorites' ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
+                  : cat === 'Premium' ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
                   : 'bg-blue-900/20 text-blue-200/70 hover:bg-blue-900/40'
                 }`}
               >
@@ -591,7 +591,6 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
               )}
-
               <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
                 {filteredChannels.length > 0 ? (
                   filteredChannels.map((channel, idx) => (
@@ -608,18 +607,14 @@ export default function PerfectPlayerUI() {
 
       {/* PLAYER UI */}
       <main className={`flex-col bg-[#020813] z-20 transition-all duration-0 ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
-        
         {activeChannel && (
           <div className="flex items-center justify-between p-3 bg-[#0a182b] border-b border-blue-400/10 shadow-lg z-30 flex-shrink-0 w-full">
             <div className="flex items-center gap-3">
               <button onClick={handleUiBack} className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 bg-blue-900/20 py-1.5 px-3 rounded-lg transition-colors">
                 <ArrowLeft size={18} /> <span className="text-sm tracking-wider">BACK</span>
               </button>
-              
               <div className="flex items-center gap-2">
-                <div className="text-blue-50 text-sm md:text-base font-semibold truncate max-w-[150px] md:max-w-none">
-                  {activeChannel.name}
-                </div>
+                <div className="text-blue-50 text-sm md:text-base font-semibold truncate max-w-[150px] md:max-w-none">{activeChannel.name}</div>
                 <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
                   <Heart size={18} className={favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
                 </button>
@@ -628,52 +623,57 @@ export default function PerfectPlayerUI() {
           </div>
         )}
 
-        <div className={`flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden`}>
+        <div className="flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden">
           
           <div className="w-full landscape:flex-1 md:flex-1 relative bg-black flex-shrink-0 flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto shadow-2xl shadow-blue-900/20">
-            {!activeChannel && (
+            {!activeChannel ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020813] z-0">
                 <PlayCircle size={70} className="text-blue-900/30 mb-4 drop-shadow-lg" />
                 <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
               </div>
+            ) : (
+              // Conditionally unmounting video DOM completely destroys instances and fulfills "Like New Session"
+              <>
+                {playerError && (
+                  <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
+                    <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
+                    <h2 className="text-lg font-bold text-white mb-2">Stream Unavailable</h2>
+                    <p className="text-xs md:text-sm text-gray-400 max-w-sm mb-6">{playerError}</p>
+                    <button onClick={() => {
+                        const temp = activeChannel;
+                        setActiveChannel(null); 
+                        setTimeout(() => setActiveChannel(temp), 50); // Hard reload trick
+                      }} 
+                      className="flex items-center gap-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-full font-bold tracking-widest transition-colors text-white text-sm"
+                    >
+                      <RefreshCcw size={16} /> RETRY
+                    </button>
+                  </div>
+                )}
+                
+                <div ref={containerRef} className="w-full h-full absolute inset-0 z-10 opacity-100">
+                  <video 
+                    ref={videoRef} 
+                    className={`w-full h-full bg-black transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
+                    autoPlay 
+                    playsInline 
+                  />
+                </div>
+              </>
             )}
-            
-            {playerError && activeChannel && (
-              <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
-                <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
-                <h2 className="text-lg font-bold text-white mb-2">Stream Unavailable</h2>
-                <p className="text-xs md:text-sm text-gray-400 max-w-sm mb-6">{playerError}</p>
-                <button onClick={executePlayStream} className="flex items-center gap-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-full font-bold tracking-widest transition-colors text-white text-sm">
-                  <RefreshCcw size={16} /> RETRY
-                </button>
-              </div>
-            )}
-
-            <div ref={containerRef} className={`w-full h-full absolute inset-0 z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-              <video 
-                ref={videoRef} 
-                className={`w-full h-full bg-black transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
-                autoPlay 
-                playsInline 
-              />
-            </div>
           </div>
 
           {activeChannel && (
             <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
-              
               <div className="flex items-center justify-between mb-3 flex-shrink-0">
                 <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
                 
-                {/* AUTO FIT TOGGLE RELOCATED HERE */}
                 <button 
-                  onClick={() => setIsZoomed(!isZoomed)}
+                  onClick={toggleAutoFit}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold transition-colors border shadow-sm ${
-                    isZoomed 
-                    ? 'bg-pink-500/20 text-pink-400 border-pink-500/50 hover:bg-pink-500/30' 
-                    : 'bg-blue-900/40 text-blue-300 border-blue-400/20 hover:bg-blue-900/60'
+                    isZoomed ? 'bg-pink-500/20 text-pink-400 border-pink-500/50 hover:bg-pink-500/30' : 'bg-blue-900/40 text-blue-300 border-blue-400/20 hover:bg-blue-900/60'
                   }`}
                   title="Toggle Full Screen Auto-Fit"
                 >
@@ -699,7 +699,6 @@ export default function PerfectPlayerUI() {
           )}
         </div>
       </main>
-
     </div>
   );
 }
