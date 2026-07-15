@@ -150,11 +150,17 @@ export default function PerfectPlayerUI() {
   // Persistent Auto Fit Zoom State
   const [isZoomed, setIsZoomed] = useState(false);
 
-  // Refs
+  // Core Refs
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
+  
+  // Persistent Player Refs (Enables Instant Switching without Flushes)
+  const playerRef = useRef(null);
+  const uiRef = useRef(null);
+  const isShakaInitializing = useRef(false);
+  const isManualAudioSwitch = useRef(false);
 
   // 1. Mount, Network, Configs, & Viewport Setup
   useEffect(() => {
@@ -359,103 +365,35 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. COMPLETE FRESH SESSION SHAKA INITIALIZER
+  // 3. SHAKA INSTANCE MANAGER & INSTANT PLAYBACK ENGINE
   useEffect(() => {
-    if (!isMounted || isOffline || !activeChannel || !videoRef.current || !containerRef.current) return;
+    // A) Full Teardown when Back button is clicked (Satisfies "Like New Session")
+    if (!activeChannel) {
+      if (uiRef.current) {
+        uiRef.current.destroy();
+        uiRef.current = null;
+      }
+      if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+      return;
+    }
 
-    let player = null;
-    let ui = null;
-    let isManualAudioSwitch = false;
+    if (!isMounted || isOffline || !videoRef.current || !containerRef.current) return;
 
-    const initPlayerSession = async () => {
-      setPlayerError(null);
+    // B) The Instant Playback Loader (Never destroys UI, only drops buffer and replaces URL)
+    const loadStream = async (playerInstance) => {
       try {
-        const shaka = await import('shaka-player/dist/shaka-player.ui');
-        shaka.polyfill.installAll();
-
-        if (!shaka.Player.isBrowserSupported()) return;
-
-        player = new shaka.Player(videoRef.current);
-        ui = new shaka.ui.Overlay(player, containerRef.current, videoRef.current);
+        setPlayerError(null);
+        await playerInstance.unload(); // Instantly drops previous video to prevent UI freeze
         
-        ui.configure({
-          controlPanelElements: ['play_pause', 'time_and_duration', 'spacer', 'mute', 'volume', 'picture_in_picture', 'quality', 'fullscreen']
-        });
-
-        player.addEventListener('error', (e) => {
-          console.error('Shaka Player Error', e.detail);
-          setPlayerError("Stream unavailable or DRM error. Please try another channel.");
-        });
-
-        // DYNAMIC AUDIO QUALITY HIJACKER
-        player.addEventListener('adaptation', () => {
-          if (isManualAudioSwitch || !player) return;
-          
-          const tracks = player.getVariantTracks();
-          const active = tracks.find(t => t.active);
-          if (!active || !active.height) return;
-
-          const isLowRes = active.height <= 360;
-          // Find alternative audio variants for the exact same video resolution
-          const peers = tracks.filter(t => t.height === active.height);
-          
-          // If only 1 audio option is available, audio is baked in and cannot be decoupled
-          if (peers.length <= 1) return;
-
-          peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
-          
-          let targetTrack;
-          if (isLowRes) {
-              targetTrack = peers[Math.floor((peers.length - 1) / 2)]; // Medium
-          } else {
-              targetTrack = peers[peers.length - 1]; // Highest
-          }
-
-          if (targetTrack && targetTrack.id !== active.id) {
-              isManualAudioSwitch = true;
-              // clearBuffer=false ensures video doesn't freeze during audio quality switch
-              player.selectVariantTrack(targetTrack, true, false); 
-              
-              // Restore ABR after 10s cooldown to allow network adaptation later
-              setTimeout(() => {
-                  if (player) {
-                    player.configure({ abr: { enabled: true } });
-                    isManualAudioSwitch = false;
-                  }
-              }, 10000);
-          }
-        });
-
-        player.getNetworkingEngine().registerRequestFilter((type, request) => {
-          const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
-          const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
-          
-          if (isManifest || isSegment) {
-            let uri = request.uris[0];
-            if (activeChannel.url.includes('__hdnea__=')) {
-                const tokenMatch = activeChannel.url.match(/(__hdnea__=[^&]+)/);
-                if (tokenMatch && !uri.includes('__hdnea__=')) {
-                    const sep = uri.includes('?') ? '&' : '?';
-                    request.uris[0] = uri + sep + tokenMatch[1];
-                }
-                return; 
-            }
-
-            const currentToken = activeChannel.cookie ? activeChannel.cookie : tokenRef.current;
-            if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-               const sep = uri.includes('?') ? '&' : '?';
-               const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-               request.uris[0] = uri + sep + cleanToken;
-            }
-          }
-        });
-
         let drmConfig = { clearKeys: {} };
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
 
-        player.configure({
+        playerInstance.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 }
@@ -471,8 +409,8 @@ export default function PerfectPlayerUI() {
            forceMimeType = 'application/x-mpegURL'; 
         }
 
-        if (forceMimeType) await player.load(finalUrl, null, forceMimeType);
-        else await player.load(finalUrl);
+        if (forceMimeType) await playerInstance.load(finalUrl, null, forceMimeType);
+        else await playerInstance.load(finalUrl);
 
         if ('mediaSession' in navigator) {
           navigator.mediaSession.metadata = new window.MediaMetadata({
@@ -487,17 +425,115 @@ export default function PerfectPlayerUI() {
       }
     };
 
-    initPlayerSession();
+    // C) Player Initializer (Only runs if a player doesn't already exist)
+    const initAndLoad = async () => {
+      if (isShakaInitializing.current) return;
+      isShakaInitializing.current = true;
 
-    // CLEANUP: Completely destroys instance on Back Button to guarantee "Like New Session"
-    return () => {
-      if (ui) ui.destroy();
-      if (player) {
-        player.destroy();
-        player = null;
+      try {
+        const shaka = await import('shaka-player/dist/shaka-player.ui');
+        shaka.polyfill.installAll();
+
+        if (!shaka.Player.isBrowserSupported()) return;
+
+        const player = new shaka.Player(videoRef.current);
+        const ui = new shaka.ui.Overlay(player, containerRef.current, videoRef.current);
+        
+        ui.configure({
+          controlPanelElements: ['play_pause', 'time_and_duration', 'spacer', 'mute', 'volume', 'picture_in_picture', 'quality', 'fullscreen']
+        });
+
+        player.addEventListener('error', (e) => {
+          console.error('Shaka Player Error', e.detail);
+          setPlayerError("Stream unavailable or DRM error. Please try another channel.");
+        });
+
+        // DYNAMIC AUDIO QUALITY HIJACKER
+        player.addEventListener('adaptation', () => {
+          if (isManualAudioSwitch.current || !playerRef.current) return;
+          
+          const playerInstance = playerRef.current;
+          const tracks = playerInstance.getVariantTracks();
+          const active = tracks.find(t => t.active);
+          if (!active || !active.height) return;
+
+          const isLowRes = active.height <= 360;
+          const peers = tracks.filter(t => t.height === active.height);
+          
+          if (peers.length <= 1) return;
+
+          peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
+          
+          let targetTrack;
+          if (isLowRes) targetTrack = peers[Math.floor((peers.length - 1) / 2)]; // Medium
+          else targetTrack = peers[peers.length - 1]; // Highest
+
+          if (targetTrack && targetTrack.id !== active.id) {
+              isManualAudioSwitch.current = true;
+              playerInstance.selectVariantTrack(targetTrack, true, false); 
+              
+              setTimeout(() => {
+                  if (playerRef.current) {
+                    playerRef.current.configure({ abr: { enabled: true } });
+                    isManualAudioSwitch.current = false;
+                  }
+              }, 10000);
+          }
+        });
+
+        // FRESH REFERENCE NETWORK FILTER
+        player.getNetworkingEngine().registerRequestFilter((type, request) => {
+          const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+          const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+          
+          if (isManifest || isSegment) {
+            const currentActiveChannel = activeChannelRef.current;
+            if (!currentActiveChannel || !currentActiveChannel.url) return;
+
+            let uri = request.uris[0];
+            if (currentActiveChannel.url.includes('__hdnea__=')) {
+                const tokenMatch = currentActiveChannel.url.match(/(__hdnea__=[^&]+)/);
+                if (tokenMatch && !uri.includes('__hdnea__=')) {
+                    const sep = uri.includes('?') ? '&' : '?';
+                    request.uris[0] = uri + sep + tokenMatch[1];
+                }
+                return; 
+            }
+
+            const currentToken = currentActiveChannel.cookie ? currentActiveChannel.cookie : tokenRef.current;
+            if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+               const sep = uri.includes('?') ? '&' : '?';
+               const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+               request.uris[0] = uri + sep + cleanToken;
+            }
+          }
+        });
+
+        playerRef.current = player;
+        uiRef.current = ui;
+
+        await loadStream(player);
+      } finally {
+        isShakaInitializing.current = false;
       }
     };
+
+    // Execute logic: If player exists, instantly swap video. Else build it.
+    if (playerRef.current) {
+      loadStream(playerRef.current);
+    } else {
+      initAndLoad();
+    }
+
   }, [activeChannel, isMounted, isOffline]);
+
+  // Handle Component Unmount globally
+  useEffect(() => {
+    return () => {
+      if (uiRef.current) uiRef.current.destroy();
+      if (playerRef.current) playerRef.current.destroy();
+    };
+  }, []);
 
   // Handle Selection & Push State
   const handleChannelSelect = useCallback((channel) => {
@@ -692,7 +728,6 @@ export default function PerfectPlayerUI() {
                 <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
               </div>
             ) : (
-              // Conditionally unmounting video DOM completely destroys instances and fulfills "Like New Session"
               <>
                 {playerError && (
                   <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
@@ -753,7 +788,7 @@ export default function PerfectPlayerUI() {
 
               <div className="hidden landscape:grid md:grid grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none scrollbar-thin scrollbar-thumb-blue-500/30 scrollbar-track-transparent content-start pr-1">
                 {similarChannels.map((c, idx) => (
-                  <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
+                  <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
                 ))}
               </div>
             </div>
