@@ -62,7 +62,7 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player Engine (Runs Once)
+  // 3. Initialize Shaka Player Engine
   useEffect(() => {
     if (!isMounted || !videoRef.current || playerRef.current) return;
 
@@ -83,8 +83,10 @@ export default function App() {
         addSeekBar: true
       });
 
-      // Token Injection Filter
-      player.getNetworkingEngine().registerRequestFilter((type, request) => {
+      const netEngine = player.getNetworkingEngine();
+
+      // OUTGOING FILTER: Token Injection
+      netEngine.registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
@@ -95,6 +97,17 @@ export default function App() {
              const cleanToken = tokenRef.current.startsWith('?') ? tokenRef.current.substring(1) : tokenRef.current;
              request.uris[0] = uri + separator + cleanToken;
           }
+        }
+      });
+
+      // INCOMING FILTER: Manifest Rewriter (Crucial for forcing ClearKey over Widevine)
+      netEngine.registerResponseFilter((type, response) => {
+        if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
+          let mpdText = new TextDecoder().decode(response.data);
+          // Strip Widevine PSSH blocks so Shaka falls back to ClearKey seamlessly
+          mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?<\/ContentProtection>/gis, '');
+          mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?\/>/gis, '');
+          response.data = new TextEncoder().encode(mpdText);
         }
       });
 
@@ -172,41 +185,41 @@ export default function App() {
       <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden">
         
         {/* TOP NAVIGATION */}
-        <header className="bg-[#111] border-b border-[#222] h-16 flex items-center justify-between px-4 z-20 flex-none shadow-md">
-          <div className="flex items-center gap-3">
+        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-20 flex-none shadow-md">
+          <div className="flex items-center gap-2">
             {activeChannel && (
               <button 
                 onClick={() => setActiveChannel(null)} 
-                className="md:hidden text-gray-400 hover:text-white p-1 rounded-full hover:bg-gray-800 transition"
+                className="md:hidden text-gray-400 hover:text-white p-1.5 rounded-full hover:bg-gray-800 transition"
               >
-                <ArrowLeft size={24} />
+                <ArrowLeft size={22} />
               </button>
             )}
-            <h1 className="text-xl md:text-2xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent tracking-wide">
-              Live @Ayush@8481
+            <h1 className="text-lg md:text-2xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent tracking-wide">
+              Ayush@8481
             </h1>
           </div>
           
           {/* Top Right Corner Search */}
           <div className="flex items-center">
             {searchOpen ? (
-              <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
-                <Search size={16} className="text-cyan-500 mr-2" />
+              <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1 md:py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
+                <Search size={14} className="text-cyan-500 mr-2" />
                 <input 
                   autoFocus
                   type="text" 
-                  placeholder="Search channels..." 
-                  className="bg-transparent border-none outline-none text-sm w-32 md:w-64 text-white placeholder-gray-500"
+                  placeholder="Search..." 
+                  className="bg-transparent border-none outline-none text-xs md:text-sm w-28 md:w-56 text-white placeholder-gray-500"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
                 <button onClick={() => { setSearchOpen(false); setSearchQuery(''); }} className="text-gray-500 hover:text-white ml-2">
-                  <X size={16} />
+                  <X size={14} />
                 </button>
               </div>
             ) : (
               <button onClick={() => setSearchOpen(true)} className="p-2 rounded-full bg-gray-900 text-gray-400 hover:text-cyan-400 hover:bg-gray-800 transition-colors">
-                <Search size={20} />
+                <Search size={18} />
               </button>
             )}
           </div>
@@ -215,7 +228,7 @@ export default function App() {
         {/* MAIN BODY AREA */}
         <main className="flex flex-1 overflow-hidden relative">
           
-          {/* LEFT PANE: Channels & Categories (Grid or Sidebar depending on context) */}
+          {/* LEFT PANE: Channels & Categories */}
           <div className={`flex flex-col bg-[#0f0f0f] border-r border-[#222] transition-all duration-300 z-10
               ${activeChannel 
                 ? 'hidden md:flex md:w-80 lg:w-96' // Desktop Sidebar Mode
@@ -223,12 +236,12 @@ export default function App() {
               }`}
           >
             {/* Horizontal Categories Row */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 py-3 bg-[#111] shadow-md flex-none border-b border-[#222]">
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2.5 bg-[#111] shadow-md flex-none border-b border-[#222]">
               {categories.map(cat => (
                 <button
                   key={cat}
                   onClick={() => setActiveCategory(cat)}
-                  className={`px-4 py-1.5 rounded-full whitespace-nowrap text-sm font-medium transition-all duration-300 border
+                  className={`px-3 py-1 md:px-4 md:py-1.5 rounded-full whitespace-nowrap text-[11px] md:text-xs font-semibold transition-all duration-300 border
                     ${activeCategory === cat 
                       ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]' 
                       : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-600 hover:text-white'
@@ -239,35 +252,38 @@ export default function App() {
               ))}
             </div>
 
-            {/* Channels List / Grid */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-4">
+            {/* HIGH DENSITY Channels Grid */}
+            <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-3">
               {filteredChannels.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-gray-600">
-                  <Search size={48} className="mb-4 opacity-20" />
-                  <p>No channels found</p>
+                  <Search size={40} className="mb-3 opacity-20" />
+                  <p className="text-sm">No channels found</p>
                 </div>
               ) : (
-                <div className={`${activeChannel ? 'flex flex-col gap-2' : 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4'}`}>
+                <div className={`${activeChannel 
+                  ? 'flex flex-col gap-1.5' // Sidebar layout when playing on desktop
+                  : 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2' // High-density layout
+                }`}>
                   {filteredChannels.map(channel => (
                     <div 
                       key={channel.id}
                       onClick={() => setActiveChannel(channel)}
-                      className={`cursor-pointer rounded-xl overflow-hidden transition-all duration-300 border group
+                      className={`cursor-pointer rounded-lg overflow-hidden transition-all duration-200 group
                         ${activeChannel?.id === channel.id 
-                            ? 'border-cyan-500 bg-cyan-900/20 shadow-[inset_4px_0_0_#06b6d4]' 
-                            : 'border-transparent bg-gray-900/40 hover:bg-gray-800 hover:border-gray-700'}
-                        ${activeChannel ? 'flex items-center p-2 gap-3' : 'flex flex-col'}`
+                            ? 'border border-cyan-500 bg-cyan-900/20 shadow-[inset_3px_0_0_#06b6d4]' 
+                            : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}
+                        ${activeChannel ? 'flex items-center p-1.5 gap-3' : 'flex flex-col p-1.5'}`
                       }
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img 
                         src={channel.logo} 
-                        onError={(e) => { e.target.src = 'https://via.placeholder.com/150?text=TV' }}
-                        className={`${activeChannel ? 'w-16 h-12 object-contain bg-black rounded-lg' : 'w-full aspect-video object-cover bg-black opacity-90 group-hover:opacity-100 transition-opacity'}`}
+                        onError={(e) => { e.target.src = 'https://via.placeholder.com/100?text=TV' }}
+                        className={`${activeChannel ? 'w-14 h-10 object-contain bg-black rounded' : 'w-full aspect-video object-cover bg-black rounded-md opacity-90 group-hover:opacity-100 transition-opacity'}`}
                       />
-                      <div className={`p-2 flex-1 min-w-0 ${activeChannel ? 'p-0' : 'p-3'}`}>
-                        <h3 className={`font-semibold truncate text-gray-200 group-hover:text-white ${activeChannel ? 'text-sm' : 'text-sm md:text-base'}`}>{channel.name}</h3>
-                        <p className={`text-xs text-gray-500 truncate mt-0.5 ${activeChannel ? 'text-[10px]' : ''}`}>{channel.category}</p>
+                      <div className={`flex-1 min-w-0 ${activeChannel ? 'py-0' : 'pt-1.5'}`}>
+                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-xs' : 'text-[11px] md:text-xs'}`}>{channel.name}</h3>
+                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-[9px]' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
                       </div>
                     </div>
                   ))}
@@ -290,12 +306,12 @@ export default function App() {
             {activeChannel && (
               <div className="max-w-6xl mx-auto w-full">
                 {/* Active Channel Details */}
-                <div className="p-4 md:p-8 flex items-start gap-4">
+                <div className="p-4 md:p-6 flex items-start gap-3 md:gap-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={activeChannel.logo} className="w-16 h-16 md:w-20 md:h-20 rounded-xl object-contain bg-white/5 border border-gray-800 p-1 shadow-lg" />
+                  <img src={activeChannel.logo} className="w-14 h-14 md:w-16 md:h-16 rounded-xl object-contain bg-white/5 border border-gray-800 p-1 shadow-lg" />
                   <div>
-                    <h2 className="text-xl md:text-3xl font-bold text-white tracking-tight">{activeChannel.name}</h2>
-                    <span className="inline-block mt-2 px-3 py-1 bg-gray-900 border border-gray-700 text-cyan-400 text-[10px] md:text-xs font-semibold rounded-full uppercase tracking-wider shadow-sm">
+                    <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">{activeChannel.name}</h2>
+                    <span className="inline-block mt-1.5 px-2.5 py-0.5 bg-gray-900 border border-gray-700 text-cyan-400 text-[10px] font-semibold rounded-full uppercase tracking-wider shadow-sm">
                       {activeChannel.category}
                     </span>
                   </div>
@@ -303,11 +319,11 @@ export default function App() {
 
                 {/* Related Channels (Scrollable Row) */}
                 {relatedChannels.length > 0 && (
-                  <div className="mt-2 px-4 md:px-8 pb-12">
-                    <h3 className="text-lg font-bold text-gray-300 mb-4 flex items-center gap-2">
+                  <div className="mt-1 px-4 md:px-6 pb-10">
+                    <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3 flex items-center gap-2">
                       More in {activeChannel.category}
                     </h3>
-                    <div className="flex gap-4 overflow-x-auto scrollbar-hide pb-4 snap-x">
+                    <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 snap-x">
                       {relatedChannels.map(channel => (
                         <div 
                           key={channel.id}
@@ -315,16 +331,16 @@ export default function App() {
                             setActiveChannel(channel);
                             window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to player on mobile
                           }}
-                          className="snap-start flex-none w-36 md:w-48 cursor-pointer group"
+                          className="snap-start flex-none w-32 md:w-40 cursor-pointer group"
                         >
-                          <div className="w-full aspect-video rounded-xl overflow-hidden border border-gray-800 bg-gray-900 group-hover:border-cyan-500 group-hover:shadow-[0_0_15px_rgba(6,182,212,0.3)] transition-all relative">
+                          <div className="w-full aspect-video rounded-lg overflow-hidden border border-gray-800 bg-gray-900 group-hover:border-cyan-500 transition-all relative">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={channel.logo} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all duration-500" />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-3">
-                              <PlayCircle className="text-cyan-400 w-8 h-8" />
+                            <img src={channel.logo} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all duration-300" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
+                              <PlayCircle className="text-cyan-400 w-6 h-6" />
                             </div>
                           </div>
-                          <h4 className="font-semibold text-sm mt-2 text-gray-400 group-hover:text-white truncate">{channel.name}</h4>
+                          <h4 className="font-medium text-[11px] md:text-xs mt-1.5 text-gray-400 group-hover:text-white truncate">{channel.name}</h4>
                         </div>
                       ))}
                     </div>
