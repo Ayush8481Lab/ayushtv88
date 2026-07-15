@@ -37,7 +37,7 @@ export default function App() {
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Token
+        // Fetch Token securely
         const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
         const tokenData = await tokenRes.json();
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
@@ -62,7 +62,7 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player Engine
+  // 3. Initialize Shaka Player Engine (MATCHES EXACT WORKING HTML LOGIC)
   useEffect(() => {
     if (!isMounted || !videoRef.current || playerRef.current) return;
 
@@ -85,26 +85,26 @@ export default function App() {
 
       const netEngine = player.getNetworkingEngine();
 
-      // OUTGOING FILTER: Token Injection
+      // EXACT OUTGOING FILTER FROM YOUR WORKING HTML
       netEngine.registerRequestFilter((type, request) => {
-        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
-        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
-
-        if (isManifest || isSegment) {
-          let uri = request.uris[0];
-          if (tokenRef.current && !uri.includes('hdnea')) {
-             const separator = uri.includes('?') ? '&' : '?';
-             const cleanToken = tokenRef.current.startsWith('?') ? tokenRef.current.substring(1) : tokenRef.current;
-             request.uris[0] = uri + separator + cleanToken;
+        if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST || type === shaka.net.NetworkingEngine.RequestType.SEGMENT) {
+          // Loop through ALL URIs just like the old code to support failovers securely
+          for (let i = 0; i < request.uris.length; i++) {
+            let uri = request.uris[i];
+            if (tokenRef.current && !uri.includes('hdnea')) {
+               const separator = uri.includes('?') ? '&' : '?';
+               let cleanToken = tokenRef.current;
+               if (cleanToken.startsWith('?')) cleanToken = cleanToken.substring(1);
+               request.uris[i] = uri + separator + cleanToken;
+            }
           }
         }
       });
 
-      // INCOMING FILTER: Manifest Rewriter (Crucial for forcing ClearKey over Widevine)
+      // EXACT INCOMING FILTER (WIDEVINE STRIPPER) FROM YOUR WORKING HTML
       netEngine.registerResponseFilter((type, response) => {
         if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
           let mpdText = new TextDecoder().decode(response.data);
-          // Strip Widevine PSSH blocks so Shaka falls back to ClearKey seamlessly
           mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?<\/ContentProtection>/gis, '');
           mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?\/>/gis, '');
           response.data = new TextEncoder().encode(mpdText);
@@ -123,7 +123,7 @@ export default function App() {
     };
   }, [isMounted]);
 
-  // 4. Handle Video Playback when a channel is clicked
+  // 4. Handle Video Playback & DRM setup
   useEffect(() => {
     if (!activeChannel || !playerRef.current) return;
 
@@ -151,7 +151,6 @@ export default function App() {
     playStream();
   }, [activeChannel]);
 
-  // Prevent SSR Build crashes
   if (!isMounted) return <div className="h-screen bg-black" />;
 
   // Data Filtering
@@ -165,12 +164,11 @@ export default function App() {
     ? channels.filter(c => c.category === activeChannel.category && c.id !== activeChannel.id)
     : [];
 
-  // Loading Screen
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#050505] text-cyan-500 flex-col gap-5">
          <Activity size={56} className="animate-spin" />
-         <p className="font-semibold tracking-widest uppercase text-sm">Initializing Engine...</p>
+         <p className="font-semibold tracking-widest uppercase text-sm">Initializing Ayush@8481 Engine...</p>
       </div>
     );
   }
@@ -200,7 +198,7 @@ export default function App() {
             </h1>
           </div>
           
-          {/* Top Right Corner Search */}
+          {/* Top Right Search Engine */}
           <div className="flex items-center">
             {searchOpen ? (
               <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1 md:py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
@@ -208,8 +206,8 @@ export default function App() {
                 <input 
                   autoFocus
                   type="text" 
-                  placeholder="Search..." 
-                  className="bg-transparent border-none outline-none text-xs md:text-sm w-28 md:w-56 text-white placeholder-gray-500"
+                  placeholder="Search channels..." 
+                  className="bg-transparent border-none outline-none text-xs md:text-sm w-32 md:w-56 text-white placeholder-gray-500"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -228,15 +226,15 @@ export default function App() {
         {/* MAIN BODY AREA */}
         <main className="flex flex-1 overflow-hidden relative">
           
-          {/* LEFT PANE: Channels & Categories */}
+          {/* LEFT PANE: Channels & Categories (Hidden on mobile when video plays) */}
           <div className={`flex flex-col bg-[#0f0f0f] border-r border-[#222] transition-all duration-300 z-10
               ${activeChannel 
-                ? 'hidden md:flex md:w-80 lg:w-96' // Desktop Sidebar Mode
-                : 'flex w-full'                    // Fullscreen Grid Mode
+                ? 'hidden md:flex md:w-[340px] lg:w-[400px]' // Sidebar Mode
+                : 'flex w-full'                             // Fullscreen Grid Mode
               }`}
           >
-            {/* Horizontal Categories Row */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2.5 bg-[#111] shadow-md flex-none border-b border-[#222]">
+            {/* Horizontal Categories */}
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2 bg-[#111] shadow-md flex-none border-b border-[#222]">
               {categories.map(cat => (
                 <button
                   key={cat}
@@ -252,8 +250,8 @@ export default function App() {
               ))}
             </div>
 
-            {/* HIGH DENSITY Channels Grid */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-3">
+            {/* High Density Channels Grid */}
+            <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-4">
               {filteredChannels.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-gray-600">
                   <Search size={40} className="mb-3 opacity-20" />
@@ -261,8 +259,8 @@ export default function App() {
                 </div>
               ) : (
                 <div className={`${activeChannel 
-                  ? 'flex flex-col gap-1.5' // Sidebar layout when playing on desktop
-                  : 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2' // High-density layout
+                  ? 'flex flex-col gap-2' 
+                  : 'grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2 md:gap-3' 
                 }`}>
                   {filteredChannels.map(channel => (
                     <div 
@@ -272,18 +270,18 @@ export default function App() {
                         ${activeChannel?.id === channel.id 
                             ? 'border border-cyan-500 bg-cyan-900/20 shadow-[inset_3px_0_0_#06b6d4]' 
                             : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}
-                        ${activeChannel ? 'flex items-center p-1.5 gap-3' : 'flex flex-col p-1.5'}`
+                        ${activeChannel ? 'flex items-center p-2 gap-3' : 'flex flex-col p-1.5 md:p-2'}`
                       }
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img 
                         src={channel.logo} 
                         onError={(e) => { e.target.src = 'https://via.placeholder.com/100?text=TV' }}
-                        className={`${activeChannel ? 'w-14 h-10 object-contain bg-black rounded' : 'w-full aspect-video object-cover bg-black rounded-md opacity-90 group-hover:opacity-100 transition-opacity'}`}
+                        className={`${activeChannel ? 'w-16 h-12 object-contain bg-black rounded' : 'w-full aspect-video object-cover bg-black rounded opacity-90 group-hover:opacity-100 transition-opacity'}`}
                       />
-                      <div className={`flex-1 min-w-0 ${activeChannel ? 'py-0' : 'pt-1.5'}`}>
-                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-xs' : 'text-[11px] md:text-xs'}`}>{channel.name}</h3>
-                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-[9px]' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
+                      <div className={`flex-1 min-w-0 ${activeChannel ? 'py-0' : 'pt-2'}`}>
+                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-sm' : 'text-[10px] md:text-[11px]'}`}>{channel.name}</h3>
+                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-xs' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
                       </div>
                     </div>
                   ))}
@@ -305,7 +303,8 @@ export default function App() {
 
             {activeChannel && (
               <div className="max-w-6xl mx-auto w-full">
-                {/* Active Channel Details */}
+                
+                {/* Active Channel Title Area */}
                 <div className="p-4 md:p-6 flex items-start gap-3 md:gap-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={activeChannel.logo} className="w-14 h-14 md:w-16 md:h-16 rounded-xl object-contain bg-white/5 border border-gray-800 p-1 shadow-lg" />
@@ -317,7 +316,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Related Channels (Scrollable Row) */}
+                {/* Related Channels Slider */}
                 {relatedChannels.length > 0 && (
                   <div className="mt-1 px-4 md:px-6 pb-10">
                     <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3 flex items-center gap-2">
@@ -329,7 +328,7 @@ export default function App() {
                           key={channel.id}
                           onClick={() => {
                             setActiveChannel(channel);
-                            window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to player on mobile
+                            window.scrollTo({ top: 0, behavior: 'smooth' }); 
                           }}
                           className="snap-start flex-none w-32 md:w-40 cursor-pointer group"
                         >
