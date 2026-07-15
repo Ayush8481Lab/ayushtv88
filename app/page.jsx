@@ -76,7 +76,7 @@ export default function PerfectPlayerUI() {
         if (extractedCookie) tokenRef.current = extractedCookie;
 
         // Fetch Standard Channels
-        const standardRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
+        const standardRes = await fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${new Date().getTime()}`);
         const standardData = await standardRes.json();
 
         // Fetch Premium Channels (New API)
