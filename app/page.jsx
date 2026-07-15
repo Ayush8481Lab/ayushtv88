@@ -2,19 +2,19 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2 } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft } from 'lucide-react';
 
 // ==========================================
-// OPTIMIZED CARD COMPONENT (Prevents Scroll Lag)
+// OPTIMIZED CARD COMPONENT (White Square Logo Only)
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => (
   <button
     onClick={() => onClick(channel)}
     title={channel.name}
-    className={`relative w-full aspect-square bg-white rounded-xl p-2 flex items-center justify-center 
+    className={`relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
       transform-gpu transition-transform duration-200 ease-out will-change-transform
       hover:scale-105 active:scale-95 shadow-sm
-      ${isActive ? 'ring-4 ring-pink-500 scale-105 shadow-pink-500/50' : 'border border-gray-200/10'}`}
+      ${isActive ? 'ring-4 ring-pink-500 scale-105 shadow-[0_0_15px_rgba(236,72,153,0.5)]' : 'border border-gray-200/10'}`}
   >
     {/* eslint-disable-next-line @next/next/no-img-element */}
     <img
@@ -56,7 +56,7 @@ export default function PerfectPlayerUI() {
     setIsMounted(true);
   }, []);
 
-  // 2. Fetch Core APIs (Channels & Tokens)
+  // 2. Fetch Core APIs (Channels & Tokens) - Logic Strictly Intact
   useEffect(() => {
     if (!isMounted) return;
 
@@ -137,12 +137,19 @@ export default function PerfectPlayerUI() {
     };
   }, [isMounted]);
 
-  // 4. Handle Channel Playback
+  // 4. Handle Channel Playback & Stop on "Back"
   useEffect(() => {
-    if (!activeChannel || !playerRef.current) return;
+    if (!playerRef.current) return;
 
     const playStream = async () => {
       const player = playerRef.current;
+      
+      // If user clicks "Back" (activeChannel becomes null), explicitly stop playback
+      if (!activeChannel) {
+        try { await player.unload(); } catch (e) {}
+        return;
+      }
+
       try {
         await player.unload();
         let drmConfig = { clearKeys: {} };
@@ -189,63 +196,19 @@ export default function PerfectPlayerUI() {
     setActiveChannel(channel);
   }, []);
 
+  const handleBackToMain = () => {
+    setActiveChannel(null); // Unloads player and returns to main grid
+  };
+
   if (!isMounted) return <div className="h-screen w-screen bg-[#09090b]" />;
 
   return (
-    // STRICT 100dvh Layout: Prevents mobile browser bar from hiding the bottom list
-    <div className="flex flex-col md:flex-row h-[100dvh] w-full bg-[#0a0a0f] text-white font-sans overflow-hidden selection:bg-pink-500/30">
+    <div className="flex h-[100dvh] w-full bg-[#0a0a0f] text-white font-sans overflow-hidden selection:bg-pink-500/30">
       
-      {/* ======================= MAIN CONTENT (PLAYER & RELATED) ======================= */}
-      {/* order-1 guarantees it stays strictly at the TOP on mobile devices */}
-      <main className={`order-1 md:order-2 flex flex-col w-full z-20 bg-black transition-all duration-300
-        ${!activeChannel ? 'hidden md:flex md:flex-1' : 'flex-none md:flex-1 md:h-full md:overflow-y-auto'}`}>
-        
-        {/* Shaka Video Player Container */}
-        <div className="w-full aspect-video relative flex-shrink-0 bg-black flex items-center justify-center">
-          {!activeChannel && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-black z-0">
-              <PlayCircle size={70} className="text-white/10 mb-4 drop-shadow-lg" />
-              <p className="text-xl tracking-widest font-light text-white/50">Select a channel</p>
-            </div>
-          )}
-          
-          <div ref={containerRef} className={`w-full h-full absolute inset-0 z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <video 
-              ref={videoRef} 
-              className="w-full h-full bg-black object-contain" 
-              autoPlay 
-              playsInline
-            />
-          </div>
-        </div>
-
-        {/* Similar Category Channels Strip */}
-        {activeChannel && (
-          <div className="w-full bg-[#111116] border-t border-white/5 p-3 md:p-5 flex-shrink-0 shadow-lg">
-            <h3 className="text-white/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
-              More in {activeChannel.category || activeChannel.group || activeChannel.group_title || 'Category'}
-            </h3>
-            
-            <div className="flex overflow-x-auto gap-3 pb-2 scrollbar-thin scrollbar-thumb-pink-600 scrollbar-track-transparent will-change-scroll transform-gpu">
-              {similarChannels.length > 0 ? (
-                similarChannels.map((c, idx) => (
-                  <div key={idx} className="flex-shrink-0 w-[80px] md:w-[100px]">
-                    <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-gray-500 italic">No other channels found.</p>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* ======================= SIDEBAR (FILTRATION & GRID) ======================= */}
-      {/* order-2 puts this strictly at the BOTTOM on mobile devices. Takes exactly remaining flex-1 height */}
-      <aside className={`order-2 md:order-1 flex flex-col w-full md:w-[350px] lg:w-[400px] bg-[#0f0f13] border-r border-white/5 z-10
-        ${activeChannel ? 'flex-1 overflow-hidden' : 'h-full overflow-hidden'}`}>
+      {/* ======================= MAIN PAGE (GRID VIEW) ======================= */}
+      {/* On Mobile: Hidden if watching a video. On Desktop: Always visible as a sidebar. */}
+      <aside className={`flex flex-col w-full md:w-[350px] lg:w-[400px] bg-[#0f0f13] border-r border-white/5 z-10
+        ${activeChannel ? 'hidden md:flex h-full' : 'flex h-[100dvh]'}`}>
         
         {/* Header: Live@8481 & Search */}
         <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-white/5 bg-[#141419]">
@@ -266,7 +229,7 @@ export default function PerfectPlayerUI() {
 
         {/* Search Input Area */}
         {isSearchOpen && (
-          <div className="p-3 bg-[#111116] flex-shrink-0">
+          <div className="p-3 bg-[#111116] flex-shrink-0 animate-in slide-in-from-top-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
               <input 
@@ -289,7 +252,7 @@ export default function PerfectPlayerUI() {
                 onClick={() => setActiveCategory(cat)}
                 className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold tracking-wider transition-colors duration-200 ${
                   activeCategory === cat 
-                  ? 'bg-pink-600 text-white shadow-md' 
+                  ? 'bg-gradient-to-r from-pink-600 to-indigo-600 text-white shadow-md' 
                   : 'bg-white/5 text-gray-400 hover:bg-white/10'
                 }`}
               >
@@ -299,8 +262,7 @@ export default function PerfectPlayerUI() {
           </div>
         </div>
 
-        {/* Extremely Fast Scrollable Grid */}
-        {/* flex-1 enables scrolling strictly within this container, keeping the page rigid */}
+        {/* Grid Container */}
         <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 p-3 md:p-4 will-change-scroll transform-gpu">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-500">
@@ -324,6 +286,69 @@ export default function PerfectPlayerUI() {
           )}
         </div>
       </aside>
+
+      {/* ======================= PLAYER PAGE (VIDEO VIEW) ======================= */}
+      {/* On Mobile: Visible ONLY when watching a video. On Desktop: Always visible. */}
+      <main className={`flex-col w-full md:flex-1 bg-black z-20 transition-all duration-0
+        ${activeChannel ? 'flex h-[100dvh] md:h-full' : 'hidden md:flex h-full'}`}>
+        
+        {/* Mobile ONLY "Back to Main Page" Header */}
+        {activeChannel && (
+          <div className="md:hidden flex items-center p-4 bg-[#141419] border-b border-white/10 shadow-lg z-30 flex-shrink-0">
+            <button 
+              onClick={handleBackToMain}
+              className="flex items-center gap-2 text-pink-500 font-bold hover:text-pink-400 transition-colors bg-white/5 py-1.5 px-3 rounded-lg"
+            >
+              <ArrowLeft size={20} />
+              <span className="text-sm tracking-wider">BACK</span>
+            </button>
+            <div className="ml-auto text-white/80 text-sm font-semibold truncate max-w-[200px]">
+              {activeChannel.name}
+            </div>
+          </div>
+        )}
+
+        {/* Shaka Video Player Container */}
+        <div className="w-full relative bg-black flex-shrink-0 md:flex-1 flex items-center justify-center aspect-video md:aspect-auto">
+          {!activeChannel && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0f] z-0">
+              <PlayCircle size={70} className="text-white/5 mb-4 drop-shadow-lg" />
+              <p className="text-xl tracking-widest font-light text-white/20">Select a channel to play</p>
+            </div>
+          )}
+          
+          <div ref={containerRef} className={`w-full h-full absolute inset-0 z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <video 
+              ref={videoRef} 
+              className="w-full h-full bg-black object-contain" 
+              autoPlay 
+              playsInline
+            />
+          </div>
+        </div>
+
+        {/* Similar Category Channels Strip (Bottom Area in Player Page) */}
+        {activeChannel && (
+          <div className="w-full flex-1 md:flex-none md:h-auto bg-[#111116] md:border-t border-white/5 p-4 md:p-5 shadow-inner overflow-hidden flex flex-col">
+            <h3 className="text-white/60 text-[11px] md:text-sm font-bold mb-3 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
+              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
+              More in {activeChannel.category || activeChannel.group || activeChannel.group_title || 'Category'}
+            </h3>
+            
+            <div className="flex overflow-x-auto gap-3 pb-2 scrollbar-thin scrollbar-thumb-pink-600 scrollbar-track-transparent will-change-scroll transform-gpu">
+              {similarChannels.length > 0 ? (
+                similarChannels.map((c, idx) => (
+                  <div key={idx} className="flex-shrink-0 w-[90px] md:w-[110px]">
+                    <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-500 italic mt-2">No other channels found.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
 
     </div>
   );
