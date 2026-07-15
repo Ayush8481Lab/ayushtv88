@@ -507,6 +507,24 @@ export default function PerfectPlayerUI() {
   return (
     <div className="flex h-[100dvh] w-full bg-[#020813] text-white font-sans overflow-hidden selection:bg-pink-500/30">
       
+      {/* FULLSCREEN NOTCH & CAMERA CUTOUT PROTECTION */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        /* Prevents Shaka Player UI from hiding behind phone notches on long screens */
+        .shaka-video-container:fullscreen .shaka-bottom-controls,
+        .shaka-video-container:-webkit-full-screen .shaka-bottom-controls {
+          padding-left: max(35px, env(safe-area-inset-left)) !important;
+          padding-right: max(35px, env(safe-area-inset-right)) !important;
+          padding-bottom: max(20px, env(safe-area-inset-bottom)) !important;
+          box-sizing: border-box !important;
+          width: 100% !important;
+        }
+        
+        /* Ensure video stays perfectly centered when Auto Fit (Zoom) is ON */
+        video.object-cover {
+          object-position: center center !important;
+        }
+      `}} />
+
       {/* SIDEBAR / MAIN GRID */}
       <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 
         ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
