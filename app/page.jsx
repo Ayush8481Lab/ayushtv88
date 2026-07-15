@@ -2,59 +2,69 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, X, ArrowLeft, PlayCircle, Activity } from 'lucide-react';
+import { PlayCircle, Tv, Settings2, Activity } from 'lucide-react';
 
-export default function App() {
-  // SSR Safety Check
+export default function DeepAnalysisPlayer() {
+  // SSR Safety Check - Prevents Vercel Build Crashes
   const [isMounted, setIsMounted] = useState(false);
 
-  // Data States
+  // States
   const [channels, setChannels] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const [activeChannel, setActiveChannel] = useState(null);
+  const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // UI States
-  const [activeChannel, setActiveChannel] = useState(null);
-  const [activeCategory, setActiveCategory] = useState('All');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
-
-  // Refs
+  // Refs for Player and mutable state
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const uiRef = useRef(null);
-  const tokenRef = useRef("");
+  const tokenRef = useRef(""); 
+  const logsRef = useRef([]);
 
-  // 1. Mark as Mounted
+  // Helper to append logs safely inside callbacks
+  const addLog = (msg, type = 'req') => {
+    const time = new Date().toISOString().substring(11, 23);
+    const newLog = { time, msg, type };
+    logsRef.current = [...logsRef.current.slice(-49), newLog]; // Keep last 50 logs
+    setLogs(logsRef.current);
+  };
+
+  // 1. Mark as Mounted to render safely
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 2. Fetch API Data
+  // 2. Fetch APIs (Channels & Tokens)
   useEffect(() => {
     if (!isMounted) return;
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Token securely
+        // Fetch Token
+        addLog("Fetching Authorization Tokens...", "req");
         const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
         const tokenData = await tokenRes.json();
+        
+        // Extract cookie safely from the JSON array
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
-        if (extractedCookie) tokenRef.current = extractedCookie;
+        if (extractedCookie) {
+          tokenRef.current = extractedCookie; // e.g., "hdnea=st=..."
+          addLog(`[AUTH] Token securely loaded into engine.`, "token");
+        }
 
         // Fetch Channels
+        addLog("Fetching Channel List...", "req");
         const channelRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
         const channelData = await channelRes.json();
         
-        // Extract Categories
-        const uniqueCategories = ['All', ...Array.from(new Set(channelData.map(c => c.category).filter(Boolean)))];
-        
         setChannels(channelData);
-        setCategories(uniqueCategories);
         setIsLoading(false);
+        addLog(`[SYSTEM] Loaded ${channelData.length} channels successfully.`, "res");
+
       } catch (error) {
         console.error("API Fetch Error:", error);
+        addLog("[ERROR] Failed to fetch API data. Check CORS or Network.", "err");
         setIsLoading(false);
       }
     };
@@ -62,7 +72,7 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // 3. Initialize Shaka Player Engine (MATCHES EXACT WORKING HTML LOGIC)
+  // 3. Initialize Shaka Player (Runs Once)
   useEffect(() => {
     if (!isMounted || !videoRef.current || playerRef.current) return;
 
@@ -70,44 +80,54 @@ export default function App() {
       const shaka = await import('shaka-player/dist/shaka-player.ui');
       shaka.polyfill.installAll();
 
-      if (!shaka.Player.isBrowserSupported()) return;
+      if (!shaka.Player.isBrowserSupported()) {
+        addLog("[ERROR] Browser not supported for Shaka Player.", "err");
+        return;
+      }
 
-      const player = new shaka.Player(videoRef.current);
-      const ui = new shaka.ui.Overlay(player, containerRef.current, videoRef.current);
+      const video = videoRef.current;
+      const container = containerRef.current;
+      const player = new shaka.Player(video);
       
+      // Setup UI (PiP, Quality, etc.)
+      const ui = new shaka.ui.Overlay(player, container, video);
       ui.configure({
         controlPanelElements: [
           'play_pause', 'time_and_duration', 'spacer', 'mute', 
           'volume', 'picture_in_picture', 'quality', 'fullscreen'
-        ],
-        addSeekBar: true
+        ]
       });
 
-      const netEngine = player.getNetworkingEngine();
+      // OUTGOING FILTER: Token Injection
+      player.getNetworkingEngine().registerRequestFilter((type, request) => {
+        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
 
-      // EXACT OUTGOING FILTER FROM YOUR WORKING HTML
-      netEngine.registerRequestFilter((type, request) => {
-        if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST || type === shaka.net.NetworkingEngine.RequestType.SEGMENT) {
-          // Loop through ALL URIs just like the old code to support failovers securely
-          for (let i = 0; i < request.uris.length; i++) {
-            let uri = request.uris[i];
-            if (tokenRef.current && !uri.includes('hdnea')) {
-               const separator = uri.includes('?') ? '&' : '?';
-               let cleanToken = tokenRef.current;
-               if (cleanToken.startsWith('?')) cleanToken = cleanToken.substring(1);
-               request.uris[i] = uri + separator + cleanToken;
-            }
+        if (isManifest || isSegment) {
+          const currentToken = tokenRef.current;
+          let uri = request.uris[0];
+
+          // Append token if not present
+          if (currentToken && !uri.includes('hdnea')) {
+             const separator = uri.includes('?') ? '&' : '?';
+             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+             request.uris[0] = uri + separator + cleanToken;
+          }
+          
+          if (isManifest) {
+             const fileName = uri.split('?')[0].split('/').pop();
+             addLog(`-> REQ: MANIFEST: ${fileName}`, "req");
+             if (currentToken) addLog(`   [AUTH] Appended Token to ${fileName}`, "token");
           }
         }
       });
 
-      // EXACT INCOMING FILTER (WIDEVINE STRIPPER) FROM YOUR WORKING HTML
-      netEngine.registerResponseFilter((type, response) => {
-        if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
-          let mpdText = new TextDecoder().decode(response.data);
-          mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?<\/ContentProtection>/gis, '');
-          mpdText = mpdText.replace(/<ContentProtection schemeIdUri="urn:uuid:EDEF8BA9-79D6-4ACE-A3C8-27DCD51D21ED".*?\/>/gis, '');
-          response.data = new TextEncoder().encode(mpdText);
+      player.addEventListener('error', (e) => {
+        const err = e.detail;
+        if (err.code >= 6000 && err.code < 7000) {
+          addLog(`[DRM ERROR ${err.code}] Key mismatch or unauthorized.`, "err");
+        } else {
+          addLog(`[ERROR] Playback failed. Code: ${err.code}`, "err");
         }
       });
 
@@ -123,27 +143,39 @@ export default function App() {
     };
   }, [isMounted]);
 
-  // 4. Handle Video Playback & DRM setup
+  // 4. Handle Channel Playback & ClearKey DRM Setup
   useEffect(() => {
     if (!activeChannel || !playerRef.current) return;
 
     const playStream = async () => {
+      const player = playerRef.current;
+      addLog(`\n=========================================`, "req");
+      addLog(`[PROCESS] Initiating: ${activeChannel.name}`, "req");
+
       try {
-        await playerRef.current.unload();
+        await player.unload();
         
         let drmConfig = { clearKeys: {} };
+        
+        // Apply ClearKey only if keys exist and aren't "null" string
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
+          addLog(`[DRM] Injecting ClearKey -> ID: ${activeChannel.keyId}`, "drm");
         }
 
-        playerRef.current.configure({
+        // Configure Player
+        player.configure({
           drm: drmConfig,
-          manifest: { dash: { ignoreDrmInfo: false } },
+          manifest: { dash: { ignoreDrmInfo: false } }, // Shaka natively handles MPD/M3U8 based on URL mapping
           streaming: { bufferingGoal: 5 }
         });
 
-        await playerRef.current.load(activeChannel.url);
+        // Load standard .mpd or .m3u8 stream seamlessly
+        await player.load(activeChannel.url);
+        addLog(`[SUCCESS] PLAYBACK STARTED!`, "res");
+
       } catch (error) {
+        addLog(`[ERROR] Failed to load stream.`, "err");
         console.error("Playback error:", error);
       }
     };
@@ -151,205 +183,112 @@ export default function App() {
     playStream();
   }, [activeChannel]);
 
-  if (!isMounted) return <div className="h-screen bg-black" />;
-
-  // Data Filtering
-  const filteredChannels = channels.filter(c => {
-    const matchCategory = activeCategory === 'All' || c.category === activeCategory;
-    const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCategory && matchSearch;
-  });
-
-  const relatedChannels = activeChannel 
-    ? channels.filter(c => c.category === activeChannel.category && c.id !== activeChannel.id)
-    : [];
-
-  if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-[#050505] text-cyan-500 flex-col gap-5">
-         <Activity size={56} className="animate-spin" />
-         <p className="font-semibold tracking-widest uppercase text-sm">Initializing Ayush@8481 Engine...</p>
-      </div>
-    );
-  }
+  if (!isMounted) return <div className="h-screen bg-black" />; // SSR Safety
 
   return (
-    <>
-      <style>{`
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
+    <div className="flex h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden selection:bg-cyan-500/30">
+      
+      {/* Sidebar: Channel List */}
+      <aside className="w-80 bg-[#111] border-r border-[#222] flex flex-col z-10 shadow-2xl">
+        <div className="p-5 border-b border-[#222] flex items-center gap-3 bg-[#161616]">
+          <Tv className="text-cyan-400" size={24} />
+          <h1 className="text-lg font-bold tracking-wide">Deep Player</h1>
+        </div>
 
-      <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden">
-        
-        {/* TOP NAVIGATION */}
-        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-20 flex-none shadow-md">
-          <div className="flex items-center gap-2">
-            {activeChannel && (
-              <button 
-                onClick={() => setActiveChannel(null)} 
-                className="md:hidden text-gray-400 hover:text-white p-1.5 rounded-full hover:bg-gray-800 transition"
-              >
-                <ArrowLeft size={22} />
-              </button>
-            )}
-            <h1 className="text-lg md:text-2xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent tracking-wide">
-              Ayush@8481
-            </h1>
-          </div>
-          
-          {/* Top Right Search Engine */}
-          <div className="flex items-center">
-            {searchOpen ? (
-              <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1 md:py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
-                <Search size={14} className="text-cyan-500 mr-2" />
-                <input 
-                  autoFocus
-                  type="text" 
-                  placeholder="Search channels..." 
-                  className="bg-transparent border-none outline-none text-xs md:text-sm w-32 md:w-56 text-white placeholder-gray-500"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <button onClick={() => { setSearchOpen(false); setSearchQuery(''); }} className="text-gray-500 hover:text-white ml-2">
-                  <X size={14} />
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setSearchOpen(true)} className="p-2 rounded-full bg-gray-900 text-gray-400 hover:text-cyan-400 hover:bg-gray-800 transition-colors">
-                <Search size={18} />
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* MAIN BODY AREA */}
-        <main className="flex flex-1 overflow-hidden relative">
-          
-          {/* LEFT PANE: Channels & Categories (Hidden on mobile when video plays) */}
-          <div className={`flex flex-col bg-[#0f0f0f] border-r border-[#222] transition-all duration-300 z-10
-              ${activeChannel 
-                ? 'hidden md:flex md:w-[340px] lg:w-[400px]' // Sidebar Mode
-                : 'flex w-full'                             // Fullscreen Grid Mode
-              }`}
-          >
-            {/* Horizontal Categories */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2 bg-[#111] shadow-md flex-none border-b border-[#222]">
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setActiveCategory(cat)}
-                  className={`px-3 py-1 md:px-4 md:py-1.5 rounded-full whitespace-nowrap text-[11px] md:text-xs font-semibold transition-all duration-300 border
-                    ${activeCategory === cat 
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]' 
-                      : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-600 hover:text-white'
-                    }`}
+        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
+          {isLoading ? (
+            <div className="p-8 flex flex-col items-center text-gray-500 gap-3">
+              <Activity className="animate-spin text-cyan-500" size={32} />
+              <p className="text-sm">Fetching API & Tokens...</p>
+            </div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {channels.map((channel, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => setActiveChannel(channel)}
+                  className={`flex items-center gap-4 p-3 rounded-xl cursor-pointer transition-all duration-200 group
+                    ${activeChannel?.name === channel.name 
+                      ? 'bg-cyan-900/30 border border-cyan-800/50' 
+                      : 'hover:bg-[#1a1a1a] border border-transparent'}`}
                 >
-                  {cat}
-                </button>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={channel.logo}
+                    alt={channel.name}
+                    onError={(e) => { e.target.src = 'https://via.placeholder.com/60?text=TV' }}
+                    className="w-12 h-12 rounded-lg object-cover shadow-md group-hover:scale-105 transition-transform"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm truncate text-gray-200 group-hover:text-white transition-colors">
+                      {channel.name}
+                    </h3>
+                    <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider flex items-center gap-1">
+                      {channel.keyId !== "null" ? (
+                        <span className="text-emerald-500/80">• DRM ACTIVE</span>
+                      ) : (
+                        <span className="text-amber-500/80">• HLS/CLEAR</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
               ))}
             </div>
+          )}
+        </div>
+      </aside>
 
-            {/* High Density Channels Grid */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-4">
-              {filteredChannels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-gray-600">
-                  <Search size={40} className="mb-3 opacity-20" />
-                  <p className="text-sm">No channels found</p>
-                </div>
-              ) : (
-                <div className={`${activeChannel 
-                  ? 'flex flex-col gap-2' 
-                  : 'grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2 md:gap-3' 
-                }`}>
-                  {filteredChannels.map(channel => (
-                    <div 
-                      key={channel.id}
-                      onClick={() => setActiveChannel(channel)}
-                      className={`cursor-pointer rounded-lg overflow-hidden transition-all duration-200 group
-                        ${activeChannel?.id === channel.id 
-                            ? 'border border-cyan-500 bg-cyan-900/20 shadow-[inset_3px_0_0_#06b6d4]' 
-                            : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}
-                        ${activeChannel ? 'flex items-center p-2 gap-3' : 'flex flex-col p-1.5 md:p-2'}`
-                      }
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img 
-                        src={channel.logo} 
-                        onError={(e) => { e.target.src = 'https://via.placeholder.com/100?text=TV' }}
-                        className={`${activeChannel ? 'w-16 h-12 object-contain bg-black rounded' : 'w-full aspect-video object-cover bg-black rounded opacity-90 group-hover:opacity-100 transition-opacity'}`}
-                      />
-                      <div className={`flex-1 min-w-0 ${activeChannel ? 'py-0' : 'pt-2'}`}>
-                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-sm' : 'text-[10px] md:text-[11px]'}`}>{channel.name}</h3>
-                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-xs' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+      {/* Main Area: Player & Logger */}
+      <main className="flex-1 flex flex-col bg-black">
+        
+        {/* Video Container (70% Height) */}
+        <div className="flex-1 relative flex items-center justify-center bg-gradient-to-b from-gray-900 to-black">
+          {!activeChannel && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-0">
+              <PlayCircle size={64} className="mb-4 opacity-20" />
+              <p className="text-lg tracking-wider font-light">Select a stream to begin analysis</p>
             </div>
-          </div>
-
-          {/* RIGHT PANE: Video Player & Related Channels */}
-          <div className={`flex flex-col bg-black overflow-y-auto scrollbar-hide w-full transition-all duration-300
-              ${activeChannel ? 'flex flex-1' : 'hidden'}`}
+          )}
+          
+          <div 
+            ref={containerRef} 
+            className={`w-full max-w-5xl aspect-video shadow-2xl relative z-10 ${!activeChannel ? 'hidden' : 'block'}`}
           >
-            {/* Shaka Video Player Container */}
-            <div className="w-full bg-black relative shadow-2xl border-b border-[#222]">
-              <div ref={containerRef} className="mx-auto w-full max-w-6xl aspect-video relative">
-                <video ref={videoRef} className="w-full h-full object-contain bg-black" autoPlay playsInline />
-              </div>
-            </div>
-
-            {activeChannel && (
-              <div className="max-w-6xl mx-auto w-full">
-                
-                {/* Active Channel Title Area */}
-                <div className="p-4 md:p-6 flex items-start gap-3 md:gap-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={activeChannel.logo} className="w-14 h-14 md:w-16 md:h-16 rounded-xl object-contain bg-white/5 border border-gray-800 p-1 shadow-lg" />
-                  <div>
-                    <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">{activeChannel.name}</h2>
-                    <span className="inline-block mt-1.5 px-2.5 py-0.5 bg-gray-900 border border-gray-700 text-cyan-400 text-[10px] font-semibold rounded-full uppercase tracking-wider shadow-sm">
-                      {activeChannel.category}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Related Channels Slider */}
-                {relatedChannels.length > 0 && (
-                  <div className="mt-1 px-4 md:px-6 pb-10">
-                    <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3 flex items-center gap-2">
-                      More in {activeChannel.category}
-                    </h3>
-                    <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 snap-x">
-                      {relatedChannels.map(channel => (
-                        <div 
-                          key={channel.id}
-                          onClick={() => {
-                            setActiveChannel(channel);
-                            window.scrollTo({ top: 0, behavior: 'smooth' }); 
-                          }}
-                          className="snap-start flex-none w-32 md:w-40 cursor-pointer group"
-                        >
-                          <div className="w-full aspect-video rounded-lg overflow-hidden border border-gray-800 bg-gray-900 group-hover:border-cyan-500 transition-all relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={channel.logo} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all duration-300" />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
-                              <PlayCircle className="text-cyan-400 w-6 h-6" />
-                            </div>
-                          </div>
-                          <h4 className="font-medium text-[11px] md:text-xs mt-1.5 text-gray-400 group-hover:text-white truncate">{channel.name}</h4>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <video 
+              ref={videoRef} 
+              className="w-full h-full object-contain bg-black" 
+              autoPlay 
+            />
           </div>
-        </main>
-      </div>
-    </>
+        </div>
+
+        {/* Network Logger Terminal (30% Height) */}
+        <div className="h-[30vh] bg-[#050505] border-t-2 border-cyan-900/50 flex flex-col">
+          <div className="p-2 border-b border-[#111] bg-[#0a0a0a] flex items-center gap-2 text-xs text-gray-400 uppercase tracking-widest font-semibold">
+            <Settings2 size={14} className="text-cyan-500" />
+            Network Analysis Engine
+          </div>
+          
+          <div className="flex-1 p-4 overflow-y-auto font-mono text-[11px] md:text-[13px] leading-relaxed scrollbar-thin scrollbar-thumb-gray-800">
+            {logs.map((log, i) => (
+              <div key={i} className="mb-1 flex gap-3">
+                <span className="text-gray-600 select-none">[{log.time}]</span>
+                <span className={`
+                  ${log.type === 'req' && 'text-yellow-400'}
+                  ${log.type === 'res' && 'text-emerald-400 font-bold'}
+                  ${log.type === 'err' && 'text-red-500 font-bold'}
+                  ${log.type === 'drm' && 'text-pink-500'}
+                  ${log.type === 'token' && 'text-cyan-400 italic'}
+                `}>
+                  {log.msg}
+                </span>
+              </div>
+            ))}
+            <div ref={(el) => el && el.scrollIntoView()} />
+          </div>
+        </div>
+
+      </main>
+    </div>
   );
 }
