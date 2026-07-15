@@ -59,7 +59,6 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
         if (cachedBlob) {
           if (isMounted) setImgSrc(URL.createObjectURL(cachedBlob));
         } else {
-          // Fallback immediately, then cache in background for next time
           if (isMounted) setImgSrc(channel.logo);
           fetch(channel.logo)
             .then(r => r.blob())
@@ -194,6 +193,24 @@ export default function PerfectPlayerUI() {
       window.addEventListener('popstate', handlePopState);
       return () => window.removeEventListener('popstate', handlePopState);
     }
+  }, []);
+
+  // AUTOMATIC MOBILE PIP ON BACKGROUNDING (HOME/MENU BUTTON)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden' && activeChannelRef.current && videoRef.current) {
+        try {
+          if (!videoRef.current.paused && document.pictureInPictureElement !== videoRef.current) {
+            await videoRef.current.requestPictureInPicture();
+          }
+        } catch (error) {
+          console.warn("Auto PiP ignored by browser (requires direct user gesture):", error);
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {
@@ -342,12 +359,13 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. COMPLETE FRESH SESSION SHAKA INITIALIZER (Runs only when a channel is active)
+  // 3. COMPLETE FRESH SESSION SHAKA INITIALIZER
   useEffect(() => {
     if (!isMounted || isOffline || !activeChannel || !videoRef.current || !containerRef.current) return;
 
     let player = null;
     let ui = null;
+    let isManualAudioSwitch = false;
 
     const initPlayerSession = async () => {
       setPlayerError(null);
@@ -367,6 +385,45 @@ export default function PerfectPlayerUI() {
         player.addEventListener('error', (e) => {
           console.error('Shaka Player Error', e.detail);
           setPlayerError("Stream unavailable or DRM error. Please try another channel.");
+        });
+
+        // DYNAMIC AUDIO QUALITY HIJACKER
+        player.addEventListener('adaptation', () => {
+          if (isManualAudioSwitch || !player) return;
+          
+          const tracks = player.getVariantTracks();
+          const active = tracks.find(t => t.active);
+          if (!active || !active.height) return;
+
+          const isLowRes = active.height <= 360;
+          // Find alternative audio variants for the exact same video resolution
+          const peers = tracks.filter(t => t.height === active.height);
+          
+          // If only 1 audio option is available, audio is baked in and cannot be decoupled
+          if (peers.length <= 1) return;
+
+          peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
+          
+          let targetTrack;
+          if (isLowRes) {
+              targetTrack = peers[Math.floor((peers.length - 1) / 2)]; // Medium
+          } else {
+              targetTrack = peers[peers.length - 1]; // Highest
+          }
+
+          if (targetTrack && targetTrack.id !== active.id) {
+              isManualAudioSwitch = true;
+              // clearBuffer=false ensures video doesn't freeze during audio quality switch
+              player.selectVariantTrack(targetTrack, true, false); 
+              
+              // Restore ABR after 10s cooldown to allow network adaptation later
+              setTimeout(() => {
+                  if (player) {
+                    player.configure({ abr: { enabled: true } });
+                    isManualAudioSwitch = false;
+                  }
+              }, 10000);
+          }
         });
 
         player.getNetworkingEngine().registerRequestFilter((type, request) => {
@@ -435,7 +492,10 @@ export default function PerfectPlayerUI() {
     // CLEANUP: Completely destroys instance on Back Button to guarantee "Like New Session"
     return () => {
       if (ui) ui.destroy();
-      if (player) player.destroy();
+      if (player) {
+        player.destroy();
+        player = null;
+      }
     };
   }, [activeChannel, isMounted, isOffline]);
 
@@ -656,7 +716,8 @@ export default function PerfectPlayerUI() {
                     ref={videoRef} 
                     className={`w-full h-full bg-black transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
                     autoPlay 
-                    playsInline 
+                    playsInline
+                    autoPictureInPicture={true}
                   />
                 </div>
               </>
