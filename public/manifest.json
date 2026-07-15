@@ -1,0 +1,21 @@
+{
+  "name": "Live@8481",
+  "short_name": "Live@8481",
+  "description": "Premium Tv Player",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons":[
+    {
+      "src": "https://via.placeholder.com/192x192.png?text=M",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/512x512.png?text=M",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
