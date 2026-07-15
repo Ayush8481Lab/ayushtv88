@@ -1,59 +1,61 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, X, ArrowLeft, PlayCircle, Activity, Tv } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2 } from 'lucide-react';
 
-export default function App() {
-  // ==============================================================
-  // 1. EXACT STATE & REFS FROM YOUR WORKING CODE
-  // ==============================================================
+export default function BeautifulPlayerUI() {
+  // SSR Safety
   const [isMounted, setIsMounted] = useState(false);
+
+  // States
   const [channels, setChannels] = useState([]);
-  const [activeChannel, setActiveChannel] = useState(null);
+  const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // New UI specific states
-  const [categories, setCategories] = useState([]);
+  // UI States
+  const [activeChannel, setActiveChannel] = useState(null);
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
+  // Refs for Core Logic
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const uiRef = useRef(null);
-  const tokenRef = useRef("");
+  const tokenRef = useRef(""); 
 
-  // ==============================================================
-  // 2. EXACT API FETCH LOGIC FROM YOUR WORKING CODE
-  // ==============================================================
+  // 1. Mark as Mounted
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
+  // 2. Fetch Core APIs (Channels & Tokens) - Logic Maintained Strictly
   useEffect(() => {
     if (!isMounted) return;
 
     const fetchInitialData = async () => {
       try {
-        // Fetch Token exactly as working code
+        // Fetch Token
         const tokenRes = await fetch('https://allinonereborn2.online/jstrweb2/cookies.json');
         const tokenData = await tokenRes.json();
-        
         const extractedCookie = tokenData.find(item => item.cookie)?.cookie;
         if (extractedCookie) {
           tokenRef.current = extractedCookie;
         }
 
-        // Fetch Channels exactly as working code
+        // Fetch Channels
         const channelRes = await fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${new Date().getTime()}`);
         const channelData = await channelRes.json();
         
-        // Setup UI Categories
-        const uniqueCategories = ['All', ...Array.from(new Set(channelData.map(c => c.category).filter(Boolean)))];
-        setCategories(uniqueCategories);
         setChannels(channelData);
+
+        // Derive Categories
+        const cats = channelData.map(c => c.category || c.group || c.group_title || 'Others');
+        const uniqueCats = ['All', ...new Set(cats)];
+        setCategories(uniqueCats);
+
         setIsLoading(false);
       } catch (error) {
         console.error("API Fetch Error:", error);
@@ -64,9 +66,7 @@ export default function App() {
     fetchInitialData();
   }, [isMounted]);
 
-  // ==============================================================
-  // 3. EXACT PLAYER INITIALIZATION FROM YOUR WORKING CODE
-  // ==============================================================
+  // 3. Initialize Shaka Player (Runs Once) - Logic Maintained Strictly
   useEffect(() => {
     if (!isMounted || !videoRef.current || playerRef.current) return;
 
@@ -74,10 +74,7 @@ export default function App() {
       const shaka = await import('shaka-player/dist/shaka-player.ui');
       shaka.polyfill.installAll();
 
-      if (!shaka.Player.isBrowserSupported()) {
-        console.error("Browser not supported for Shaka Player.");
-        return;
-      }
+      if (!shaka.Player.isBrowserSupported()) return;
 
       const video = videoRef.current;
       const container = containerRef.current;
@@ -98,17 +95,12 @@ export default function App() {
         if (isManifest || isSegment) {
           const currentToken = tokenRef.current;
           let uri = request.uris[0];
-
           if (currentToken && !uri.includes('hdnea')) {
              const separator = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
              request.uris[0] = uri + separator + cleanToken;
           }
         }
-      });
-
-      player.addEventListener('error', (e) => {
-        console.error("Player error:", e.detail);
       });
 
       playerRef.current = player;
@@ -123,18 +115,14 @@ export default function App() {
     };
   }, [isMounted]);
 
-  // ==============================================================
-  // 4. EXACT PLAYBACK LOGIC FROM YOUR WORKING CODE
-  // ==============================================================
+  // 4. Handle Channel Playback & ClearKey DRM Setup - Logic Maintained Strictly
   useEffect(() => {
     if (!activeChannel || !playerRef.current) return;
 
     const playStream = async () => {
       const player = playerRef.current;
-
       try {
         await player.unload();
-        
         let drmConfig = { clearKeys: {} };
         
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
@@ -143,11 +131,16 @@ export default function App() {
 
         player.configure({
           drm: drmConfig,
-          manifest: { dash: { ignoreDrmInfo: false } }, 
+          manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 }
         });
 
         await player.load(activeChannel.url);
+        
+        // Auto scroll to top on mobile when playing starts
+        if (window.innerWidth < 768) {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       } catch (error) {
         console.error("Playback error:", error);
       }
@@ -156,209 +149,176 @@ export default function App() {
     playStream();
   }, [activeChannel]);
 
-  // ==============================================================
-  // UI RENDER (Replaces Network Logs with Channel Details)
-  // ==============================================================
-  if (!isMounted) return <div className="h-screen bg-black" />;
+  // Filtering Memos
+  const filteredChannels = useMemo(() => {
+    return channels.filter(c => {
+      const cCat = c.category || c.group || c.group_title || 'Others';
+      const matchCat = activeCategory === 'All' || cCat === activeCategory;
+      const matchSearch = c.name?.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchCat && matchSearch;
+    });
+  }, [channels, activeCategory, searchQuery]);
 
-  const filteredChannels = channels.filter(c => {
-    const matchCategory = activeCategory === 'All' || c.category === activeCategory;
-    const matchSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCategory && matchSearch;
-  });
+  const similarChannels = useMemo(() => {
+    if (!activeChannel) return [];
+    const activeCat = activeChannel.category || activeChannel.group || activeChannel.group_title || 'Others';
+    return channels.filter(c => {
+      const cCat = c.category || c.group || c.group_title || 'Others';
+      return cCat === activeCat && c.name !== activeChannel.name;
+    });
+  }, [channels, activeChannel]);
 
-  const relatedChannels = activeChannel 
-    ? channels.filter(c => c.category === activeChannel.category && c.id !== activeChannel.id)
-    : [];
 
-  if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-[#050505] text-cyan-500 flex-col gap-5">
-         <Activity size={56} className="animate-spin" />
-         <p className="font-semibold tracking-widest uppercase text-sm">Loading Ayush@8481...</p>
-      </div>
-    );
-  }
+  // Shared UI Element: Channel Square Card (White BG, No Text)
+  const ChannelCard = ({ channel }) => (
+    <button
+      onClick={() => setActiveChannel(channel)}
+      title={channel.name}
+      className={`relative group bg-white rounded-2xl p-2 md:p-3 shadow-lg flex items-center justify-center aspect-square transition-all duration-300 ease-in-out overflow-hidden hover:scale-105 hover:shadow-[0_0_20px_rgba(167,139,250,0.5)]
+      ${activeChannel?.name === channel.name ? 'ring-4 ring-pink-500 scale-105' : 'border border-transparent'}`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={channel.logo}
+        alt="channel-logo"
+        onError={(e) => { e.target.src = 'https://via.placeholder.com/150?text=TV' }}
+        className="w-full h-full object-contain drop-shadow-md transition-transform group-hover:scale-110"
+      />
+    </button>
+  );
+
+  if (!isMounted) return <div className="min-h-screen bg-[#09090b]" />;
 
   return (
-    <>
-      <style>{`
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
-
-      <div className="flex flex-col h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden">
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] text-white font-sans overflow-x-hidden selection:bg-pink-500/30">
+      
+      {/* ======================= DESKTOP & MOBILE SIDEBAR/HEADER ======================= */}
+      <aside className="w-full md:w-[350px] lg:w-[400px] flex flex-col flex-shrink-0 bg-white/5 backdrop-blur-xl border-r border-white/10 shadow-2xl z-20">
         
-        {/* NEW TOP NAVIGATION HEADER */}
-        <header className="bg-[#111] border-b border-[#222] h-14 md:h-16 flex items-center justify-between px-3 md:px-5 z-20 flex-none shadow-md">
-          <div className="flex items-center gap-2">
-            {activeChannel && (
-              <button 
-                onClick={() => setActiveChannel(null)} 
-                className="md:hidden text-gray-400 hover:text-white p-1.5 rounded-full hover:bg-gray-800 transition"
-              >
-                <ArrowLeft size={22} />
-              </button>
-            )}
-            <h1 className="text-lg md:text-2xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent tracking-wide">
-              Ayush@8481
+        {/* Top Header: Live@8481 & Search Toggle */}
+        <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/10 bg-black/20">
+          <div className="flex items-center gap-3 text-pink-500">
+            <Tv size={28} className="drop-shadow-[0_0_8px_rgba(236,72,153,0.8)]" />
+            <h1 className="text-xl md:text-2xl font-extrabold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-violet-400">
+              Live@8481
             </h1>
           </div>
           
-          {/* Top Right Search */}
-          <div className="flex items-center">
-            {searchOpen ? (
-              <div className="flex items-center bg-gray-900 border border-cyan-500/50 rounded-full px-3 py-1 md:py-1.5 shadow-[0_0_10px_rgba(6,182,212,0.2)]">
-                <Search size={14} className="text-cyan-500 mr-2" />
-                <input 
-                  autoFocus
-                  type="text" 
-                  placeholder="Search channels..." 
-                  className="bg-transparent border-none outline-none text-xs md:text-sm w-32 md:w-56 text-white placeholder-gray-500"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <button onClick={() => { setSearchOpen(false); setSearchQuery(''); }} className="text-gray-500 hover:text-white ml-2">
-                  <X size={14} />
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setSearchOpen(true)} className="p-2 rounded-full bg-gray-900 text-gray-400 hover:text-cyan-400 hover:bg-gray-800 transition-colors">
-                <Search size={18} />
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* MAIN BODY SPLIT (Exact layout structure from working code) */}
-        <div className="flex flex-1 overflow-hidden">
-          
-          {/* LEFT PANE: Channels & Categories */}
-          <aside className={`flex flex-col bg-[#111] border-r border-[#222] transition-all duration-300
-              ${activeChannel 
-                ? 'hidden md:flex md:w-[320px] lg:w-[380px]' 
-                : 'flex w-full'
-              }`}
+          <button 
+            onClick={() => setIsSearchOpen(!isSearchOpen)}
+            className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white focus:outline-none"
           >
-            {/* Category Chips */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide px-3 py-2 bg-[#111] shadow-md flex-none border-b border-[#222]">
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setActiveCategory(cat)}
-                  className={`px-3 py-1 md:px-4 md:py-1.5 rounded-full whitespace-nowrap text-[11px] md:text-xs font-semibold transition-all duration-300 border
-                    ${activeCategory === cat 
-                      ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_10px_rgba(6,182,212,0.3)]' 
-                      : 'bg-transparent text-gray-400 border-gray-800 hover:border-gray-600 hover:text-white'
-                    }`}
-                >
-                  {cat}
-                </button>
+            {isSearchOpen ? <X size={20} /> : <Search size={20} />}
+          </button>
+        </div>
+
+        {/* Search Input Area */}
+        {isSearchOpen && (
+          <div className="p-4 bg-black/30 animate-in slide-in-from-top-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search channels..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 transition-all"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Categories Filtration (Scrollable) */}
+        <div className="p-4 border-b border-white/10 bg-black/10">
+          <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`whitespace-nowrap px-4 py-2 rounded-full text-xs font-semibold tracking-wide transition-all ${
+                  activeCategory === cat 
+                  ? 'bg-gradient-to-r from-pink-600 to-violet-600 text-white shadow-[0_0_15px_rgba(219,39,119,0.5)]' 
+                  : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* All Channels Grid (Sidebar/Bottom area) */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 p-4 md:p-6">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
+              <Loader2 className="animate-spin text-pink-500" size={40} />
+              <p className="tracking-widest animate-pulse text-sm">Loading Channels...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+              {filteredChannels.map((channel, idx) => (
+                <ChannelCard key={idx} channel={channel} />
               ))}
             </div>
-
-            {/* High Density Grid */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-2 md:p-3">
-              {filteredChannels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-gray-600">
-                  <Search size={40} className="mb-3 opacity-20" />
-                  <p className="text-sm">No channels found</p>
-                </div>
-              ) : (
-                <div className={`grid gap-2 md:gap-3 ${activeChannel ? 'grid-cols-2 md:grid-cols-2' : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10'}`}>
-                  {filteredChannels.map(channel => (
-                    <div 
-                      key={channel.id}
-                      onClick={() => setActiveChannel(channel)}
-                      className={`cursor-pointer rounded-lg flex flex-col p-1.5 md:p-2 overflow-hidden transition-all duration-200 group
-                        ${activeChannel?.id === channel.id 
-                            ? 'border border-cyan-500 bg-cyan-900/20 shadow-[inset_3px_0_0_#06b6d4]' 
-                            : 'border border-transparent bg-gray-900/30 hover:bg-gray-800 hover:border-gray-700'}`
-                      }
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img 
-                        src={channel.logo} 
-                        onError={(e) => { e.target.src = 'https://via.placeholder.com/100?text=TV' }}
-                        className="w-full aspect-video object-cover bg-black rounded opacity-90 group-hover:opacity-100 transition-opacity"
-                      />
-                      <div className="flex-1 min-w-0 pt-2">
-                        <h3 className={`font-semibold text-gray-200 group-hover:text-white truncate ${activeChannel ? 'text-[10px] md:text-[11px]' : 'text-[10px] md:text-xs'}`}>{channel.name}</h3>
-                        <p className={`text-gray-500 truncate ${activeChannel ? 'text-[9px] md:text-[10px]' : 'text-[9px] md:text-[10px]'}`}>{channel.category}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
-
-          {/* RIGHT PANE: EXACTLY like "Main Area" in your working code */}
-          <main className={`flex-1 flex flex-col bg-black ${!activeChannel ? 'hidden md:flex' : 'flex'}`}>
-            
-            {/* 70% HEIGHT: VIDEO AREA */}
-            <div className="flex-1 relative flex items-center justify-center bg-gradient-to-b from-gray-900 to-black">
-              {!activeChannel && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-0">
-                  <PlayCircle size={64} className="mb-4 opacity-20" />
-                  <p className="text-lg tracking-wider font-light">Select a stream to begin playback</p>
-                </div>
-              )}
-              
-              {/* This exact video block structure is from your working file! */}
-              <div 
-                ref={containerRef} 
-                className={`w-full max-w-5xl aspect-video shadow-2xl relative z-10 ${!activeChannel ? 'hidden' : 'block'}`}
-              >
-                <video 
-                  ref={videoRef} 
-                  className="w-full h-full object-contain bg-black" 
-                  autoPlay 
-                />
-              </div>
-            </div>
-
-            {/* 30% HEIGHT: REPLACES NETWORK LOGS WITH BEAUTIFUL UI */}
-            <div className="h-[35vh] md:h-[30vh] bg-[#050505] border-t-2 border-cyan-900/50 flex flex-col">
-              <div className="p-2 border-b border-[#111] bg-[#0a0a0a] flex items-center gap-2 text-xs text-gray-400 uppercase tracking-widest font-semibold">
-                <Tv size={14} className="text-cyan-500" />
-                {activeChannel ? `${activeChannel.name} • ${activeChannel.category}` : 'Channel Information'}
-              </div>
-              
-              <div className="flex-1 p-4 overflow-y-auto scrollbar-hide">
-                {activeChannel ? (
-                  <>
-                    <h3 className="text-sm md:text-base font-bold text-gray-400 mb-3">More channels in this category</h3>
-                    <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 snap-x">
-                      {relatedChannels.map(channel => (
-                        <div 
-                          key={channel.id}
-                          onClick={() => setActiveChannel(channel)}
-                          className="snap-start flex-none w-32 md:w-40 cursor-pointer group"
-                        >
-                          <div className="w-full aspect-video rounded-lg overflow-hidden border border-gray-800 bg-gray-900 group-hover:border-cyan-500 transition-all relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={channel.logo} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all duration-300" />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center pb-2">
-                              <PlayCircle className="text-cyan-400 w-6 h-6" />
-                            </div>
-                          </div>
-                          <h4 className="font-medium text-[11px] md:text-xs mt-1.5 text-gray-400 group-hover:text-white truncate">{channel.name}</h4>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-gray-600 text-sm h-full flex items-center justify-center">
-                    Waiting for engine selection...
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </main>
+          )}
+          {!isLoading && filteredChannels.length === 0 && (
+             <div className="text-center text-gray-400 mt-10">No channels found.</div>
+          )}
         </div>
-      </div>
-    </>
+      </aside>
+
+      {/* ======================= MAIN CONTENT (PLAYER & RELATED) ======================= */}
+      <main className="flex-1 flex flex-col relative bg-black/50 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-white/10">
+        
+        {/* Video Player Area */}
+        <div className={`w-full relative shadow-2xl transition-all duration-500
+          ${!activeChannel ? 'hidden md:flex flex-1' : 'aspect-video sticky md:relative top-0 z-10'}`}
+        >
+          {/* Placeholder if no channel selected (Desktop primarily) */}
+          {!activeChannel && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm z-0">
+              <PlayCircle size={80} className="text-white/10 mb-6 drop-shadow-2xl" />
+              <p className="text-xl md:text-2xl tracking-widest font-light text-white/50">Select a channel to play</p>
+            </div>
+          )}
+          
+          {/* Shaka Container - Force 16:9 native filling */}
+          <div 
+            ref={containerRef} 
+            className={`w-full h-full absolute inset-0 z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+          >
+            <video 
+              ref={videoRef} 
+              className="w-full h-full bg-black object-contain" 
+              autoPlay 
+              playsInline
+            />
+          </div>
+        </div>
+
+        {/* Similar Category Channels (Bottom Scrollable) */}
+        {activeChannel && (
+          <div className="w-full bg-black/60 backdrop-blur-xl border-t border-white/10 p-4 md:p-6 pb-8 md:pb-6 shadow-xl animate-in fade-in duration-500">
+            <h3 className="text-white/70 text-xs md:text-sm font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span>
+              More in {activeChannel.category || activeChannel.group || activeChannel.group_title || 'this category'}
+            </h3>
+            
+            <div className="flex overflow-x-auto gap-4 pb-4 scrollbar-thin scrollbar-thumb-pink-500/50 scrollbar-track-black/20">
+              {similarChannels.length > 0 ? (
+                similarChannels.map((c, idx) => (
+                  <div key={idx} className="flex-shrink-0 w-[100px] md:w-[120px]">
+                    <ChannelCard channel={c} />
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500 italic">No other channels in this category.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+
+    </div>
   );
 }
