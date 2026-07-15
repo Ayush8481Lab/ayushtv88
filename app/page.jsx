@@ -49,15 +49,18 @@ ChannelCard.displayName = "ChannelCard";
 // ==========================================
 const buildMasterPlaylist = (url) => {
   const base = url.substring(0, url.indexOf('/live_'));
+  // Added standard codec definitions to ensure Shaka recognizes the HLS streams properly
   return `#EXTM3U
-#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240
+#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=426x240,CODECS="avc1.4d4015,mp4a.40.2"
 ${base}/live_240p/chunks.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,CODECS="avc1.4d401e,mp4a.40.2"
 ${base}/live_360p/chunks.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=854x480
+#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=854x480,CODECS="avc1.4d401f,mp4a.40.2"
 ${base}/live_480p/chunks.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
-${base}/live_720p/chunks.m3u8`;
+#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
+${base}/live_720p/chunks.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1.4d4028,mp4a.40.2"
+${base}/live_1080p/chunks.m3u8`;
 };
 
 export default function PerfectPlayerUI() {
@@ -133,7 +136,7 @@ export default function PerfectPlayerUI() {
         } catch (e) { console.error("Premium Fetch Error", e); }
 
         const customChannels = [
-          { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_480p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
+          { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
         ];
@@ -182,6 +185,7 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
+      // UPDATED NETWORK FILTER: Prevents Jio Tokens from hitting external/Akamai CDNs
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -189,7 +193,9 @@ export default function PerfectPlayerUI() {
           const currentChannel = activeChannelRef.current;
           const currentToken = currentChannel?.cookie ? currentChannel.cookie : tokenRef.current;
           let uri = request.uris[0];
-          if (currentToken && !uri.includes('st=') && !uri.includes('hdnea')) {
+          
+          // Strict check: Only append Jio Tokens if the URL belongs to jio.com
+          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
              const sep = uri.includes('?') ? '&' : '?';
              const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
              request.uris[0] = uri + sep + cleanToken;
@@ -231,15 +237,22 @@ export default function PerfectPlayerUI() {
       });
 
       let finalUrl = activeChannel.url;
+      let forceMimeType = undefined;
 
       // Quality Generator for Custom HLS Links (Dangal, etc.)
       if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
          const masterStr = buildMasterPlaylist(finalUrl);
          const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
          finalUrl = URL.createObjectURL(blob);
+         forceMimeType = 'application/x-mpegURL'; // Extremely important for Blob URLs
       }
 
-      await player.load(finalUrl);
+      // Load stream, explicitly providing MIME type if it's a blob so Shaka doesn't get confused
+      if (forceMimeType) {
+        await player.load(finalUrl, null, forceMimeType);
+      } else {
+        await player.load(finalUrl);
+      }
 
       // System Notification API (Ayush@8481 logic)
       if ('mediaSession' in navigator) {
