@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
 
 // ==========================================
 // INDEXED-DB LOGO CACHE MANAGER
@@ -1004,12 +1004,12 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
 
-                {/* Center Controls */}
-                <div className={`flex items-center justify-center gap-14 sm:gap-20 md:gap-24 ${pointerEventsClass}`}>
-                  <button onClick={(e) => handleButtonSkip(true, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
+                {/* Center Controls (PERFECTLY CENTERED - DETACHED FROM FLEX COLUMN FLOW) */}
+                <div className="absolute inset-0 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 pointer-events-none z-0">
+                  <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
                     <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                   </button>
-                  <div className="w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md">
+                  <div className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md ${pointerEventsClass}`}>
                     {!isBuffering && (
                       <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
                         {isPlaying ? (
@@ -1020,13 +1020,13 @@ export default function PerfectPlayerUI() {
                       </button>
                     )}
                   </div>
-                  <button onClick={(e) => handleButtonSkip(false, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
+                  <button onClick={(e) => handleButtonSkip(false, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
                     <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
                   </button>
                 </div>
 
                 {/* Bottom Bar: REORDERED TIMELINE ON TOP, ICONS ON BOTTOM */}
-                <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto`}>
+                <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto relative z-10`}>
                   
                   {/* Range Slider / Blue Glider (MOVED UP) */}
                   <div className="relative flex items-center w-full mb-1">
