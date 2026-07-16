@@ -53,14 +53,20 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   useEffect(() => {
     let isMounted = true;
     const loadImg = async () => {
-      if (!channel.logo) return;
+      if (!channel?.logo) return;
       try {
         const cachedBlob = await getCachedLogo(channel.logo);
         if (cachedBlob) {
           if (isMounted) setImgSrc(URL.createObjectURL(cachedBlob));
         } else {
           if (isMounted) setImgSrc(channel.logo);
-          fetch(channel.logo).then(r => r.blob()).then(blob => setCachedLogo(channel.logo, blob)).catch(() => {});
+          fetch(channel.logo)
+            .then(r => {
+              if (!r.ok) throw new Error('Bad response');
+              return r.blob();
+            })
+            .then(blob => setCachedLogo(channel.logo, blob))
+            .catch(() => {});
         }
       } catch (e) {
         if (isMounted) setImgSrc(channel.logo);
@@ -68,7 +74,9 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
     };
     loadImg();
     return () => { isMounted = false; };
-  }, [channel.logo]);
+  }, [channel?.logo]);
+
+  if (!channel) return null;
 
   return (
     <button
@@ -80,7 +88,7 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
     >
       {(!loaded || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-2">
-          <span className="text-[10px] md:text-xs font-black text-gray-800 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
+          <span className="text-[10px] md:text-xs font-black text-gray-800 text-center uppercase tracking-wider leading-tight">{channel.name || 'UNKNOWN'}</span>
         </div>
       )}
       {imgSrc && (
@@ -154,7 +162,7 @@ export default function PerfectPlayerUI() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isCSSFullscreen, setIsCSSFullscreen] = useState(false); // Fallback for landscape
+  const [isCSSFullscreen, setIsCSSFullscreen] = useState(false);
   
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -162,19 +170,16 @@ export default function PerfectPlayerUI() {
   
   // Strict Media Quality States
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState('video'); // 'video' | 'audio'
+  const [activeSettingsTab, setActiveSettingsTab] = useState('video'); 
   const [activeResolution, setActiveResolution] = useState('');
-  const [videoQuality, setVideoQuality] = useState('Auto'); // 'Auto' or height
-  const [audioQuality, setAudioQuality] = useState('Auto'); // 'Auto' or bandwidth
+  const [videoQuality, setVideoQuality] = useState('Auto');
+  const [audioQuality, setAudioQuality] = useState('Auto');
   const [availableVideoHeights, setAvailableVideoHeights] = useState([]);
   const [availableAudioBandwidths, setAvailableAudioBandwidths] = useState([]);
   
   const [isLiveStream, setIsLiveStream] = useState(false);
   const [liveLatencyText, setLiveLatencyText] = useState('LIVE');
   const [seekRange, setSeekRange] = useState({ start: 0, end: 100 });
-  
-  const [skipAccumulator, setSkipAccumulator] = useState(0);
-  const [skipSide, setSkipSide] = useState(null);
   const [isZoomed, setIsZoomed] = useState(false);
   const [zoomMessage, setZoomMessage] = useState('');
 
@@ -186,8 +191,6 @@ export default function PerfectPlayerUI() {
   const activeChannelRef = useRef(null);
   
   const controlsTimeoutRef = useRef(null);
-  const skipTimeoutRef = useRef(null);
-  const currentSkipSide = useRef(null);
   const pinchRef = useRef({ initialDist: 0, isPinching: false });
   const zoomToastTimer = useRef(null);
 
@@ -195,6 +198,7 @@ export default function PerfectPlayerUI() {
   const touchStartX = useRef(null);
   const touchEndX = useRef(null);
 
+  // 1. Mount & Setup
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
@@ -223,7 +227,7 @@ export default function PerfectPlayerUI() {
     }
   }, []);
 
-  // Strict Landscape Auto-Fullscreen (With CSS Fallback)
+  // Strict Landscape Auto-Fullscreen
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -233,16 +237,13 @@ export default function PerfectPlayerUI() {
   useEffect(() => {
     const handleOrientationChange = () => {
       if (!activeChannelRef.current || !containerRef.current) return;
-      // Allow slight delay for device rotation to register dimensions correctly
       setTimeout(async () => {
         const isLandscape = window.innerWidth > window.innerHeight;
-        
         if (isLandscape && !document.fullscreenElement) {
           try {
              await containerRef.current.requestFullscreen();
              setIsCSSFullscreen(false);
           } catch (e) {
-             // Browser blocked native fullscreen without user gesture -> Force CSS Fullscreen
              setIsCSSFullscreen(true);
           }
         } else if (!isLandscape) {
@@ -262,9 +263,7 @@ export default function PerfectPlayerUI() {
     };
   }, []);
 
-  useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
-
-  // Fetch API Logic (Unchanged for reliability)
+  // API Logic (CRASH-PROOF)
   useEffect(() => {
     if (!isMounted || isOffline) return;
     const fetchInitialData = async () => {
@@ -282,7 +281,7 @@ export default function PerfectPlayerUI() {
         if (tokenRes.status === 'fulfilled') {
           try {
             const tokenData = await tokenRes.value.json();
-            const extCookie = tokenData.find(item => item.cookie)?.cookie;
+            const extCookie = (Array.isArray(tokenData) ? tokenData : []).find(item => item.cookie)?.cookie;
             if (extCookie) tokenRef.current = extCookie;
           } catch (e) {}
         }
@@ -291,7 +290,8 @@ export default function PerfectPlayerUI() {
         if (dictKeysRes.status === 'fulfilled') {
           try {
             const d1Json = await dictKeysRes.value.json();
-            (Array.isArray(d1Json.channels || d1Json) ? (d1Json.channels || d1Json) : []).forEach(c => {
+            const channels = Array.isArray(d1Json.channels) ? d1Json.channels : (Array.isArray(d1Json) ? d1Json : []);
+            channels.forEach(c => {
               const id = String(c.id || c.channel_id || "");
               const name = String(c.name || "").toLowerCase();
               const kId = c.keyId || c.key_id || c.clearkey_id;
@@ -321,20 +321,25 @@ export default function PerfectPlayerUI() {
         }
 
         let standardData = [];
-        if (standardRes.status === 'fulfilled') { try { standardData = await standardRes.value.json(); } catch (e) {} }
+        if (standardRes.status === 'fulfilled') { 
+          try { 
+            const sJson = await standardRes.value.json();
+            // CRASH FIX: Guarantee it's an Array
+            standardData = Array.isArray(sJson) ? sJson : (Array.isArray(sJson.channels) ? sJson.channels : []); 
+          } catch (e) {} 
+        }
 
         let premiumData = [];
         if (premRes.status === 'fulfilled') {
           try {
             const premJson = await premRes.value.json();
-            if (premJson && premJson.channels) {
-              premiumData = premJson.channels.map(c => {
-                let logoName = c.id; 
-                const match = c.stream_url?.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
-                if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
-                return { id: String(c.id || ""), name: c.name, url: c.stream_url, keyId: c.key_id, key: c.key, cookie: c.cookie, category: 'Premium', logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png` };
-              });
-            }
+            const pChannels = Array.isArray(premJson.channels) ? premJson.channels : (Array.isArray(premJson) ? premJson : []);
+            premiumData = pChannels.map(c => {
+              let logoName = c.id; 
+              const match = c.stream_url?.match(/\/bpk-tv\/(.*?)\/WDVLive/i);
+              if (match) logoName = match[1].replace(/_(BTS|MOB|xyz)$/i, '');
+              return { id: String(c.id || ""), name: c.name, url: c.stream_url, keyId: c.key_id, key: c.key, cookie: c.cookie, category: 'Premium', logo: `https://jiotv.catchup.cdn.jio.com/dare_images/images/${logoName}.png` };
+            });
           } catch (e) {}
         }
 
@@ -371,81 +376,21 @@ export default function PerfectPlayerUI() {
         
         setCategories(finalCategories);
         setIsLoading(false);
-      } catch (error) { setIsLoading(false); }
+      } catch (error) { 
+        setIsLoading(false); 
+      }
     };
     fetchInitialData();
-  }, [isMounted, isOffline]);
-
-  // SHAKA PLAYER INIT
-  useEffect(() => {
-    if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
-
-    const initPlayer = async () => {
-      const shaka = await import('shaka-player'); 
-      shaka.polyfill.installAll();
-      if (!shaka.Player.isBrowserSupported()) return;
-
-      const player = new shaka.Player(videoRef.current);
-      
-      player.addEventListener('error', (e) => {
-        setPlayerError("Stream unavailable or DRM error. Please try another channel.");
-      });
-
-      player.addEventListener('variantchanged', () => {
-        const tracks = player.getVariantTracks();
-        const active = tracks.find(t => t.active);
-        if (active && active.height) setActiveResolution(`${active.height}p`);
-      });
-
-      player.addEventListener('trackschanged', () => {
-        const tracks = player.getVariantTracks();
-        const heights = [...new Set(tracks.map(t => t.height).filter(Boolean))].sort((a, b) => b - a);
-        setAvailableVideoHeights(heights);
-
-        const audios = [...new Set(tracks.map(t => t.audioBandwidth).filter(Boolean))].sort((a, b) => b - a);
-        setAvailableAudioBandwidths(audios);
-        
-        enforceQuality(player, tracks, videoQuality, audioQuality);
-      });
-
-      player.getNetworkingEngine().registerRequestFilter((type, request) => {
-        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
-        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
-        if (isManifest || isSegment) {
-          const currentCh = activeChannelRef.current;
-          if (!currentCh || !currentCh.url) return;
-          let uri = request.uris[0];
-          if (currentCh.url.includes('__hdnea__=')) {
-              const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
-              if (tokenMatch && !uri.includes('__hdnea__=')) {
-                  request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
-              }
-              return; 
-          }
-          const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
-          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-             request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
-          }
-        }
-      });
-
-      playerRef.current = player;
-    };
-    initPlayer();
-    return () => { if (playerRef.current) playerRef.current.destroy(); };
   }, [isMounted, isOffline]);
 
   // Deep Analysis strict lock mechanism for qualities
   const enforceQuality = useCallback((player, tracks, vQual, aQual) => {
     if (!tracks || tracks.length === 0) return;
 
-    // Strict Audio Analysis: If 'Auto', force highest available track. 
     const maxAudioBw = Math.max(...tracks.map(t => t.audioBandwidth || 0));
     const targetAudioBw = aQual === 'Auto' ? maxAudioBw : Number(aQual);
 
     if (vQual === 'Auto') {
-       // Enable ABR and lock Audio Bandwidth rigorously
        player.configure({
          abr: {
            enabled: true,
@@ -462,7 +407,6 @@ export default function PerfectPlayerUI() {
            if (exactTrack) player.selectVariantTrack(exactTrack, true, false);
        }
     } else {
-       // Manual selection logic 
        player.configure({ abr: { enabled: false } });
        const targetHeight = Number(vQual);
        
@@ -476,7 +420,70 @@ export default function PerfectPlayerUI() {
     }
   }, []);
 
-  // Effect to re-enforce when strictly changed by user
+  // SHAKA PLAYER INIT
+  useEffect(() => {
+    if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
+
+    const initPlayer = async () => {
+      try {
+        const shakaModule = await import('shaka-player'); 
+        const shaka = shakaModule.default || shakaModule;
+        shaka.polyfill.installAll();
+        
+        if (!shaka.Player.isBrowserSupported() || !videoRef.current) return;
+
+        const player = new shaka.Player(videoRef.current);
+        
+        player.addEventListener('error', () => {
+          setPlayerError("Stream unavailable or DRM error. Please try another channel.");
+        });
+
+        player.addEventListener('variantchanged', () => {
+          const tracks = player.getVariantTracks();
+          const active = tracks.find(t => t.active);
+          if (active && active.height) setActiveResolution(`${active.height}p`);
+        });
+
+        player.addEventListener('trackschanged', () => {
+          const tracks = player.getVariantTracks();
+          const heights = [...new Set(tracks.map(t => t.height).filter(Boolean))].sort((a, b) => b - a);
+          setAvailableVideoHeights(heights);
+
+          const audios = [...new Set(tracks.map(t => t.audioBandwidth).filter(Boolean))].sort((a, b) => b - a);
+          setAvailableAudioBandwidths(audios);
+          
+          enforceQuality(player, tracks, videoQuality, audioQuality);
+        });
+
+        player.getNetworkingEngine().registerRequestFilter((type, request) => {
+          const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+          const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+          if (isManifest || isSegment) {
+            const currentCh = activeChannelRef.current;
+            if (!currentCh || !currentCh.url) return;
+            let uri = request.uris[0];
+            if (currentCh.url.includes('__hdnea__=')) {
+                const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
+                if (tokenMatch && !uri.includes('__hdnea__=')) {
+                    request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
+                }
+                return; 
+            }
+            const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
+            if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+               const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+               request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
+            }
+          }
+        });
+
+        playerRef.current = player;
+      } catch (err) {}
+    };
+    initPlayer();
+    return () => { if (playerRef.current) playerRef.current.destroy(); };
+  }, [isMounted, isOffline, enforceQuality, audioQuality, videoQuality]);
+
   useEffect(() => {
     if (playerRef.current) {
        enforceQuality(playerRef.current, playerRef.current.getVariantTracks(), videoQuality, audioQuality);
@@ -498,7 +505,6 @@ export default function PerfectPlayerUI() {
         setPlayerError(null);
         setIsBuffering(true);
         
-        // Reset strictly locked states
         setVideoQuality('Auto');
         setAudioQuality('Auto');
         setActiveResolution('');
@@ -506,6 +512,11 @@ export default function PerfectPlayerUI() {
         setAvailableAudioBandwidths([]);
         setActiveSettingsTab('video');
         
+        if (!activeChannel.url) {
+           setPlayerError("Stream URL is missing.");
+           return;
+        }
+
         let drmConfig = { clearKeys: {} };
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
@@ -613,20 +624,22 @@ export default function PerfectPlayerUI() {
   const handleUiBack = () => {
     if (isCSSFullscreen) {
        setIsCSSFullscreen(false);
-       if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+       if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) {
+         screen.orientation.unlock();
+       }
        return;
     }
     setActiveChannel(null);
-    if (window.history.state && window.history.state.playerOpen) {
+    if (typeof window !== 'undefined' && window.history.state && window.history.state.playerOpen) {
       window.history.back();
     }
   };
 
-  // Modern Swipe Logic for Settings
+  // Modern Swipe Logic for Settings (CRASH-PROOF NULL CHECKS)
   const onSettingsTouchStart = (e) => touchStartX.current = e.targetTouches[0].clientX;
   const onSettingsTouchMove = (e) => touchEndX.current = e.targetTouches[0].clientX;
   const onSettingsTouchEnd = () => {
-    if (!touchStartX.current || !touchEndX.current) return;
+    if (touchStartX.current === null || touchEndX.current === null) return;
     const distance = touchStartX.current - touchEndX.current;
     if (distance > 40 && activeSettingsTab === 'video') setActiveSettingsTab('audio');
     if (distance < -40 && activeSettingsTab === 'audio') setActiveSettingsTab('video');
@@ -634,13 +647,26 @@ export default function PerfectPlayerUI() {
     touchEndX.current = null;
   };
 
+  const toggleFavorite = () => {
+    if (!activeChannel) return;
+    const isFav = favorites.includes(activeChannel.name);
+    let newFavs;
+    if (isFav) newFavs = favorites.filter(name => name !== activeChannel.name);
+    else newFavs = [...favorites, activeChannel.name];
+    setFavorites(newFavs);
+    localStorage.setItem('fav_channels_8481', JSON.stringify(newFavs));
+  };
+
+  // CRASH-PROOF FILTERING
   const filteredChannels = useMemo(() => {
     return channels.filter(c => {
-      if (!c.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      const cName = (c.name || '').toLowerCase();
+      if (!cName.includes((searchQuery || '').toLowerCase())) return false;
+      
       const cCat = c.category || c.group || c.group_title || 'Others';
       if (activeCategory === 'All') return true;
       if (activeCategory === 'Favorites') return favorites.includes(c.name);
-      if (activeCategory === 'Sports') return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
+      if (activeCategory === 'Sports') return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name || ''));
       return cCat === activeCategory;
     });
   }, [channels, activeCategory, searchQuery, favorites]);
@@ -679,7 +705,6 @@ export default function PerfectPlayerUI() {
   progressPercent = Math.max(0, Math.min(100, progressPercent));
   const pointerEventsClass = showControls ? 'pointer-events-auto' : 'pointer-events-none';
 
-  // Dynamic Video Container Class
   const videoContainerClasses = isCSSFullscreen 
     ? "fixed inset-0 z-[9999] bg-black w-[100vw] h-[100dvh] flex flex-col items-center justify-center"
     : `absolute inset-0 w-full h-full z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`;
@@ -692,12 +717,6 @@ export default function PerfectPlayerUI() {
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         input[type="range"] { background: transparent; }
         input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #0084ff; cursor: pointer; border: none; }
-        @keyframes fadeSlideRight { 0% { opacity: 0.2; transform: translateX(-2px); } 50% { opacity: 1; transform: translateX(2px); } 100% { opacity: 0.2; transform: translateX(-2px); } }
-        @keyframes fadeSlideLeft { 0% { opacity: 0.2; transform: translateX(2px); } 50% { opacity: 1; transform: translateX(-2px); } 100% { opacity: 0.2; transform: translateX(2px); } }
-        .anim-arr-r { animation: fadeSlideRight 0.6s ease-in-out infinite; }
-        .anim-arr-l { animation: fadeSlideLeft 0.6s ease-in-out infinite; }
-        .dly-1 { animation-delay: 0.1s; }
-        .dly-2 { animation-delay: 0.2s; }
         @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .yt-modal-mobile { animation: popUpModalMobile 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
@@ -786,6 +805,15 @@ export default function PerfectPlayerUI() {
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070b13] z-0">
                 <PlayCircle size={70} className="text-blue-900/30 mb-4 drop-shadow-lg" />
                 <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
+              </div>
+            )}
+            
+            {playerError && activeChannel && (
+              <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
+                <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
+                <h2 className="text-lg font-bold text-white mb-2">Stream Unavailable</h2>
+                <p className="text-xs md:text-sm text-gray-400 max-w-sm mb-6">{playerError}</p>
+                <button onClick={() => { const temp = activeChannel; setActiveChannel(null); setTimeout(() => setActiveChannel(temp), 50); }} className="flex items-center gap-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-full font-bold tracking-widest transition-colors text-white text-sm"><RefreshCcw size={16} /> RETRY</button>
               </div>
             )}
 
@@ -937,7 +965,7 @@ export default function PerfectPlayerUI() {
                     <button onClick={handleUiBack} className="p-1.5 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md bg-black/20 rounded-full backdrop-blur-sm">
                       <ArrowLeft size={22} className="text-white" />
                     </button>
-                    <div className="text-white text-base md:text-xl font-bold truncate max-w-[200px] md:max-w-md drop-shadow-md">{activeChannel?.name}</div>
+                    <div className="text-white text-base md:text-xl font-bold truncate max-w-[200px] md:max-w-md drop-shadow-md">{activeChannel?.name || 'Loading...'}</div>
                     <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1.5 transition-transform active:scale-75 bg-black/20 rounded-full backdrop-blur-sm">
                       <Heart size={18} className={activeChannel && favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
                     </button>
