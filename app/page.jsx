@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import 'shaka-player/dist/controls.css';
 import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
 
 // ==========================================
@@ -119,12 +120,19 @@ const CATEGORY_ORDER = ['All', 'Premium', 'Favorites', 'Sports', 'Entertainment'
 
 // Format time utility
 const formatDuration = (seconds) => {
-  if (isNaN(seconds) || seconds === Infinity) return 'LIVE';
+  if (isNaN(seconds) || seconds === Infinity) return '0:00';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+const formatLiveLatency = (seconds) => {
+  const s = Math.abs(Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  return `-${m.toString().padStart(2, '0')}:${remS.toString().padStart(2, '0')}`;
 };
 
 export default function PerfectPlayerUI() {
@@ -147,7 +155,7 @@ export default function PerfectPlayerUI() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isZoomed, setIsZoomed] = useState(false);
 
-  // Custom Player States (MoviePlayerClient UI)
+  // Custom Player States
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -157,6 +165,11 @@ export default function PerfectPlayerUI() {
   const [quality, setQuality] = useState('Auto');
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
+  
+  // LIVE Stream States
+  const [isLiveStream, setIsLiveStream] = useState(false);
+  const [liveLatencyText, setLiveLatencyText] = useState('LIVE');
+  const [seekRange, setSeekRange] = useState({ start: 0, end: 100 });
   
   // Skip Animations
   const [skipAccumulator, setSkipAccumulator] = useState(0);
@@ -196,7 +209,10 @@ export default function PerfectPlayerUI() {
       const storedZoom = localStorage.getItem('auto_fit_8481');
       if (storedZoom !== null) setIsZoomed(storedZoom === 'true');
 
-      const handlePopState = () => { if (activeChannelRef.current) setActiveChannel(null); };
+      // Android Back Button Logic
+      const handlePopState = () => { 
+        if (activeChannelRef.current) setActiveChannel(null); 
+      };
       window.addEventListener('popstate', handlePopState);
       return () => window.removeEventListener('popstate', handlePopState);
     }
@@ -374,24 +390,28 @@ export default function PerfectPlayerUI() {
         setAvailableQualities([{ index: -1, name: 'Auto' }, ...sorted.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
       });
 
-      // ALWAYS HIGHEST AUDIO QUALITY HIJACKER
+      // 100% GUARANTEED HIGHEST AUDIO QUALITY HIJACKER
       player.addEventListener('adaptation', () => {
         if (isManualAudioSwitch.current || !playerRef.current) return;
         const tracks = playerRef.current.getVariantTracks();
         const active = tracks.find(t => t.active);
         if (!active || !active.height) return;
+
+        // Isolate tracks sharing the same video resolution
         const peers = tracks.filter(t => t.height === active.height);
         if (peers.length <= 1) return;
+
+        // Sort ascending by audioBandwidth and explicitly select the highest one
         peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
-        let targetTrack = peers[peers.length - 1]; // ALWAYS Highest for the active resolution
+        let targetTrack = peers[peers.length - 1]; 
 
         if (targetTrack && targetTrack.id !== active.id) {
             isManualAudioSwitch.current = true;
-            playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = no freeze
+            playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = instant switch
             setTimeout(() => {
                 if (playerRef.current) playerRef.current.configure({ abr: { enabled: true } });
                 isManualAudioSwitch.current = false;
-            }, 10000);
+            }, 6000); // 6s cooldown prevents ABR looping
         }
       });
 
@@ -430,6 +450,7 @@ export default function PerfectPlayerUI() {
       playerRef.current.unload();
       setPlayerError(null);
       setIsPlaying(false);
+      setIsLiveStream(false);
       return;
     }
     const loadStream = async () => {
@@ -473,6 +494,39 @@ export default function PerfectPlayerUI() {
     };
     loadStream();
   }, [activeChannel]);
+
+  // Handle Playback Time & Live Latency Sync
+  const handleTimeUpdate = (e) => {
+    const current = e.currentTarget.currentTime;
+    setCurrentTime(current);
+
+    if (playerRef.current && playerRef.current.isLive()) {
+      setIsLiveStream(true);
+      const range = playerRef.current.seekRange();
+      setSeekRange(range);
+      
+      const latency = range.end - current;
+      if (latency <= 12) { // 12 seconds buffer for live threshold
+        setLiveLatencyText('LIVE');
+      } else {
+        setLiveLatencyText(formatLiveLatency(latency));
+      }
+    } else {
+      setIsLiveStream(false);
+    }
+  };
+
+  const seekToLiveEdge = () => {
+    if (videoRef.current && playerRef.current) {
+      videoRef.current.currentTime = playerRef.current.seekRange().end;
+    }
+  };
+
+  const handleSeekChange = (e) => {
+    const nextTime = parseFloat(e.target.value);
+    setCurrentTime(nextTime);
+    if (videoRef.current) videoRef.current.currentTime = nextTime;
+  };
 
   // Handle Playback UI Events
   const resetControlsTimer = () => {
@@ -563,12 +617,6 @@ export default function PerfectPlayerUI() {
     setShowPlayerSettings(false);
   };
 
-  const handleSeekChange = (e) => {
-    const nextTime = parseFloat(e.target.value);
-    setCurrentTime(nextTime);
-    if (videoRef.current) videoRef.current.currentTime = nextTime;
-  };
-
   const handleChannelSelect = useCallback((channel) => {
     if (!activeChannelRef.current && typeof window !== 'undefined') window.history.pushState({ playerOpen: true }, '');
     else if (typeof window !== 'undefined') window.history.replaceState({ playerOpen: true }, '');
@@ -579,8 +627,10 @@ export default function PerfectPlayerUI() {
   }, []);
 
   const handleUiBack = () => {
-    if (window.history.state && window.history.state.playerOpen) window.history.back();
-    else setActiveChannel(null);
+    setActiveChannel(null);
+    if (window.history.state && window.history.state.playerOpen) {
+      window.history.back(); // Clean browser history seamlessly
+    }
   };
 
   const toggleAutoFit = () => {
@@ -610,6 +660,15 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeCategory, searchQuery, favorites]);
 
+  const similarChannels = useMemo(() => {
+    if (!activeChannel) return [];
+    const activeCat = activeChannel.category || activeChannel.group || activeChannel.group_title || 'Others';
+    return channels.filter(c => {
+      const cCat = c.category || c.group || c.group_title || 'Others';
+      return cCat === activeCat && c.name !== activeChannel.name;
+    });
+  }, [channels, activeChannel]);
+
   if (!isMounted) return <div className="h-screen w-screen bg-[#020813]" />;
 
   if (isOffline) {
@@ -623,8 +682,17 @@ export default function PerfectPlayerUI() {
     );
   }
 
-  const totalDuration = duration || 100;
-  const progressPercent = totalDuration > 0 && totalDuration !== Infinity ? (currentTime / totalDuration) * 100 : 0;
+  // Calculate Blue Glider Progress safely
+  let progressPercent = 0;
+  if (isLiveStream) {
+    const rangeLen = seekRange.end - seekRange.start;
+    const pos = currentTime - seekRange.start;
+    progressPercent = rangeLen > 0 ? (pos / rangeLen) * 100 : 100;
+  } else {
+    const totalDuration = duration || 100;
+    progressPercent = totalDuration > 0 && totalDuration !== Infinity ? (currentTime / totalDuration) * 100 : 0;
+  }
+  progressPercent = Math.max(0, Math.min(100, progressPercent));
   const rangeBackground = `linear-gradient(to right, #0084ff 0%, #0084ff ${progressPercent}%, rgba(255,255,255,0.3) ${progressPercent}%, rgba(255,255,255,0.3) 100%)`;
   const pointerEventsClass = showControls ? 'pointer-events-auto' : 'pointer-events-none';
 
@@ -648,7 +716,7 @@ export default function PerfectPlayerUI() {
         .dly-2 { animation-delay: 0.2s; }
       `}} />
 
-      {/* SIDEBAR */}
+      {/* SIDEBAR (Main Grid View) */}
       <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
         <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-blue-400/10 bg-[#0a182b]">
           <div className="flex items-center gap-2 text-[#0084ff]">
@@ -721,162 +789,218 @@ export default function PerfectPlayerUI() {
         </div>
       </aside>
 
-      {/* CUSTOM REACT PLAYER UI (REPLACES SHAKA UI) */}
+      {/* RESTORED SPLIT-SCREEN PLAYER UI */}
       <main className={`flex-col bg-black z-20 transition-all duration-0 ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
-        <div className="w-full h-full relative flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto bg-black overflow-hidden group">
+        
+        <div className="flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden">
           
-          {!activeChannel && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070b13] z-0">
-              <PlayCircle size={70} className="text-blue-900/30 mb-4 drop-shadow-lg" />
-              <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
-            </div>
-          )}
-
-          {playerError && activeChannel && (
-            <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
-              <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
-              <h2 className="text-lg font-bold text-white mb-2">Stream Unavailable</h2>
-              <p className="text-xs md:text-sm text-gray-400 max-w-sm mb-6">{playerError}</p>
-              <button onClick={() => { const temp = activeChannel; setActiveChannel(null); setTimeout(() => setActiveChannel(temp), 50); }} className="flex items-center gap-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-full font-bold tracking-widest transition-colors text-white text-sm"><RefreshCcw size={16} /> RETRY</button>
-            </div>
-          )}
-
-          <div ref={containerRef} onMouseMove={handleMouseMove} className={`absolute inset-0 w-full h-full z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <video 
-              ref={videoRef} 
-              onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-              onDurationChange={(e) => setDuration(e.currentTarget.duration)}
-              onPlaying={() => { setIsBuffering(false); setIsPlaying(true); }}
-              onPause={() => setIsPlaying(false)}
-              onWaiting={() => setIsBuffering(true)}
-              onSeeking={() => setIsBuffering(true)}
-              onSeeked={() => setIsBuffering(false)}
-              onStalled={() => setIsBuffering(true)}
-              className={`w-full h-full transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
-              playsInline
-              autoPictureInPicture={true}
-            />
-
-            {/* INTERACTION SHIELD */}
-            <div onClick={handleInteraction} className="absolute inset-0 z-10 cursor-pointer" />
-
-            {/* SKIP ANIMATIONS */}
-            <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
-              <div className="flex text-white drop-shadow-lg">
-                <svg className="w-9 h-9 anim-arr-l" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-                <svg className="w-9 h-9 anim-arr-l dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-                <svg className="w-9 h-9 anim-arr-l dly-2 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          <div className="w-full landscape:flex-1 md:flex-1 relative flex items-center justify-center aspect-video landscape:aspect-auto md:aspect-auto bg-black overflow-hidden group">
+            
+            {!activeChannel && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#070b13] z-0">
+                <PlayCircle size={70} className="text-blue-900/30 mb-4 drop-shadow-lg" />
+                <p className="text-xl tracking-widest font-light text-blue-200/20">Select a channel to play</p>
               </div>
-              <span className="text-white text-sm font-bold mt-2 drop-shadow-md">-{Math.abs(skipAccumulator)}s</span>
-            </div>
-            <div className={`absolute right-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'right' ? 'opacity-100' : 'opacity-0'}`}>
-              <div className="flex text-white drop-shadow-lg">
-                <svg className="w-9 h-9 anim-arr-r dly-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                <svg className="w-9 h-9 anim-arr-r dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                <svg className="w-9 h-9 anim-arr-r -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+            )}
+
+            {playerError && activeChannel && (
+              <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm text-center p-6">
+                <AlertTriangle size={50} className="text-red-500 mb-4 animate-pulse" />
+                <h2 className="text-lg font-bold text-white mb-2">Stream Unavailable</h2>
+                <p className="text-xs md:text-sm text-gray-400 max-w-sm mb-6">{playerError}</p>
+                <button onClick={() => { const temp = activeChannel; setActiveChannel(null); setTimeout(() => setActiveChannel(temp), 50); }} className="flex items-center gap-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-full font-bold tracking-widest transition-colors text-white text-sm"><RefreshCcw size={16} /> RETRY</button>
               </div>
-              <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
-            </div>
+            )}
 
-            {/* BUFFERING SPINNER */}
-            <div className={`absolute inset-0 flex items-center justify-center bg-black/40 z-20 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
-              <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
-            </div>
+            <div ref={containerRef} onMouseMove={handleMouseMove} className={`absolute inset-0 w-full h-full z-10 ${!activeChannel ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              <video 
+                ref={videoRef} 
+                onTimeUpdate={handleTimeUpdate}
+                onDurationChange={(e) => setDuration(e.currentTarget.duration)}
+                onPlaying={() => { setIsBuffering(false); setIsPlaying(true); }}
+                onPause={() => setIsPlaying(false)}
+                onWaiting={() => setIsBuffering(true)}
+                onSeeking={() => setIsBuffering(true)}
+                onSeeked={() => setIsBuffering(false)}
+                onStalled={() => setIsBuffering(true)}
+                className={`w-full h-full transition-all duration-300 ease-in-out ${isZoomed ? 'object-cover' : 'object-contain'}`} 
+                playsInline
+                autoPictureInPicture={true}
+              />
 
-            {/* CONTROLS OVERLAY */}
-            <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
-                 style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
-              
-              {/* Top Bar */}
-              <div className={`flex items-center justify-between ${pointerEventsClass} w-full`}>
-                <div className="flex items-center gap-3">
-                  <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md">
-                    <ArrowLeft size={24} className="text-white" />
-                  </button>
-                  <div className="text-white text-sm md:text-base font-bold truncate max-w-[150px] md:max-w-xs">{activeChannel?.name}</div>
-                  <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
-                    <Heart size={20} className={activeChannel && favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
-                  </button>
+              {/* INTERACTION SHIELD */}
+              <div onClick={handleInteraction} className="absolute inset-0 z-10 cursor-pointer" />
+
+              {/* SKIP ANIMATIONS */}
+              <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="flex text-white drop-shadow-lg">
+                  <svg className="w-9 h-9 anim-arr-l" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  <svg className="w-9 h-9 anim-arr-l dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  <svg className="w-9 h-9 anim-arr-l dly-2 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
                 </div>
-                <button onClick={toggleAutoFit} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] md:text-xs font-bold transition-colors border shadow-md bg-white/10 text-white hover:bg-[#0084ff]/80 border-white/20 backdrop-blur-sm">
-                  {isZoomed ? <Minimize size={14} /> : <Maximize size={14} />} AUTO FIT: {isZoomed ? 'ON' : 'OFF'}
-                </button>
+                <span className="text-white text-sm font-bold mt-2 drop-shadow-md">-{Math.abs(skipAccumulator)}s</span>
               </div>
-
-              {/* Center Controls */}
-              <div className={`flex items-center justify-center gap-14 sm:gap-20 md:gap-24 ${pointerEventsClass}`}>
-                <button onClick={(e) => handleButtonSkip(true, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
-                  <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-                </button>
-                <div className="w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md">
-                  {!isBuffering && (
-                    <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
-                      {isPlaying ? (
-                        <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
-                      ) : (
-                        <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white translate-x-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                      )}
-                    </button>
-                  )}
+              <div className={`absolute right-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'right' ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="flex text-white drop-shadow-lg">
+                  <svg className="w-9 h-9 anim-arr-r dly-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                  <svg className="w-9 h-9 anim-arr-r dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                  <svg className="w-9 h-9 anim-arr-r -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                 </div>
-                <button onClick={(e) => handleButtonSkip(false, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
-                  <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                </button>
+                <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
               </div>
 
-              {/* Bottom Bar */}
-              <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-[10px]`}>
-                <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md mb-2">
-                  <div className="flex items-center font-normal tracking-wide text-sm text-[#e2e8f0]">
-                    <span>{formatDuration(currentTime)}</span><span className="mx-1.5">/</span><span>{formatDuration(duration)}</span>
-                  </div>
+              {/* BUFFERING SPINNER */}
+              <div className={`absolute inset-0 flex items-center justify-center bg-black/40 z-20 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
+                <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
+              </div>
 
-                  <div className="flex items-center gap-4 keep-menus-open">
-                    <button onClick={togglePictureInPicture} className="p-1.5 text-white hover:text-[#0084ff] transition">
-                      <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" /><rect x="13" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none" /></svg>
+              {/* CONTROLS OVERLAY */}
+              <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
+                   style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
+                
+                {/* Top Bar */}
+                <div className={`flex items-center justify-between ${pointerEventsClass} w-full`}>
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md">
+                      <ArrowLeft size={24} className="text-white" />
                     </button>
-
-                    <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(!showPlayerSettings); }} className="p-1.5 hover:text-[#0084ff] transition">
-                      <svg className={`w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45 ${showPlayerSettings ? 'rotate-45' : ''}`} viewBox="0 0 24 24" fill="currentColor">
-                         <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
-                      </svg>
-                    </button>
-
-                    <button onClick={toggleFullscreen} className="p-1.5 hover:text-[#0084ff] transition drop-shadow-md">
-                      {isFullscreen ? (
-                        <svg className="w-6 h-6 text-white" viewBox="0 0 24 24"><path fill="currentColor" d="M18 7h-2V5h-2v4h4V7zM6 7v2h4V5H8v2H6zm12 10v-2h-4v4h2v-2h2zM6 17h2v2h2v-4H6v2z"/></svg>
-                      ) : (
-                        <svg className="w-6 h-6 text-white" viewBox="0 0 24 24"><path fill="currentColor" d="M20 5v4h-2V7h-2V5h4zM4 5h4v2H6v2H4V5zm16 14h-4v-2h2v-2h2v4zM4 19v-4h2v2h2v2H4z"/></svg>
-                      )}
+                    <div className="text-white text-sm md:text-base font-bold truncate max-w-[150px] md:max-w-xs">{activeChannel?.name}</div>
+                    <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
+                      <Heart size={20} className={activeChannel && favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
                     </button>
                   </div>
                 </div>
 
-                {/* Progress Bar (Only show if it's not a truly endless LIVE stream) */}
-                {duration !== Infinity && !isNaN(duration) && duration > 0 && (
+                {/* Center Controls */}
+                <div className={`flex items-center justify-center gap-14 sm:gap-20 md:gap-24 ${pointerEventsClass}`}>
+                  <button onClick={(e) => handleButtonSkip(true, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
+                    <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                  </button>
+                  <div className="w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md">
+                    {!isBuffering && (
+                      <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
+                        {isPlaying ? (
+                          <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+                        ) : (
+                          <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white translate-x-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <button onClick={(e) => handleButtonSkip(false, e)} className="focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md">
+                    <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+
+                {/* Bottom Bar */}
+                <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-[10px]`}>
+                  <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md mb-2">
+                    
+                    {/* Time / Live Latency Sync */}
+                    {isLiveStream ? (
+                      <div onClick={seekToLiveEdge} className="flex items-center gap-1.5 font-bold tracking-wide text-sm cursor-pointer hover:scale-105 transition-transform">
+                        {liveLatencyText === 'LIVE' ? (
+                          <><span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span><span className="text-red-500 font-black tracking-widest drop-shadow-lg">LIVE</span></>
+                        ) : (
+                          <><span className="w-2 h-2 rounded-full bg-gray-400"></span><span className="text-gray-300 font-semibold">{liveLatencyText}</span></>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center font-normal tracking-wide text-sm text-[#e2e8f0]">
+                        <span>{formatDuration(currentTime)}</span><span className="mx-1.5">/</span><span>{formatDuration(duration)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-4 keep-menus-open">
+                      <button onClick={togglePictureInPicture} className="p-1.5 text-white hover:text-[#0084ff] transition">
+                        <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" /><rect x="13" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none" /></svg>
+                      </button>
+
+                      <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(!showPlayerSettings); }} className="p-1.5 hover:text-[#0084ff] transition">
+                        <svg className={`w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45 ${showPlayerSettings ? 'rotate-45' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                        </svg>
+                      </button>
+
+                      <button onClick={toggleFullscreen} className="p-1.5 hover:text-[#0084ff] transition drop-shadow-md">
+                        {isFullscreen ? (
+                          <svg className="w-6 h-6 text-white" viewBox="0 0 24 24"><path fill="currentColor" d="M18 7h-2V5h-2v4h4V7zM6 7v2h4V5H8v2H6zm12 10v-2h-4v4h2v-2h2zM6 17h2v2h2v-4H6v2z"/></svg>
+                        ) : (
+                          <svg className="w-6 h-6 text-white" viewBox="0 0 24 24"><path fill="currentColor" d="M20 5v4h-2V7h-2V5h4zM4 5h4v2H6v2H4V5zm16 14h-4v-2h2v-2h2v4zM4 19v-4h2v2h2v2H4z"/></svg>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Range Slider / Blue Glider */}
                   <div className="relative flex items-center w-full mt-1">
-                    <input type="range" min={0} max={duration} value={currentTime} onChange={handleSeekChange} className="w-full h-1 rounded-lg appearance-none cursor-pointer outline-none transition-all drop-shadow-md" style={{ background: rangeBackground }} />
+                    <input 
+                      type="range" 
+                      min={isLiveStream ? seekRange.start : 0} 
+                      max={isLiveStream ? seekRange.end : (duration || 100)} 
+                      value={currentTime} 
+                      onChange={handleSeekChange} 
+                      className="w-full h-1 rounded-lg appearance-none cursor-pointer outline-none transition-all drop-shadow-md" 
+                      style={{ background: rangeBackground }} 
+                    />
+                  </div>
+                </div>
+
+                {/* Quality Settings Menu */}
+                {showPlayerSettings && (
+                  <div className="absolute right-6 bottom-24 bg-[#0f0f0f]/95 backdrop-blur-md border border-gray-800 rounded-xl py-2 shadow-2xl z-50 w-64 text-left pointer-events-auto no-scrollbar max-h-[300px] overflow-y-auto keep-menus-open">
+                    <div className="flex flex-col">
+                      <div className="px-5 py-3 border-b border-gray-700/50 text-white text-sm font-bold flex items-center gap-4">
+                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> Quality
+                      </div>
+                      {availableQualities.map((item) => (
+                        <button key={item.index} onClick={() => selectQuality(item)} className={`w-full text-left px-5 py-3 text-sm transition flex items-center justify-between ${quality === item.name ? 'text-[#0084ff] bg-white/10 font-bold' : 'text-gray-300 hover:bg-white/5'}`}>
+                          <span>{item.name}</span>{quality === item.name && <svg className="w-4 h-4 fill-current text-[#0084ff]" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
-
-              {/* Quality Settings Menu */}
-              {showPlayerSettings && (
-                <div className="absolute right-6 bottom-24 bg-[#0f0f0f]/95 backdrop-blur-md border border-gray-800 rounded-xl py-2 shadow-2xl z-50 w-64 text-left pointer-events-auto no-scrollbar max-h-[300px] overflow-y-auto keep-menus-open">
-                  <div className="flex flex-col">
-                    <div className="px-5 py-3 border-b border-gray-700/50 text-white text-sm font-bold flex items-center gap-4">
-                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> Quality
-                    </div>
-                    {availableQualities.map((item) => (
-                      <button key={item.index} onClick={() => selectQuality(item)} className={`w-full text-left px-5 py-3 text-sm transition flex items-center justify-between ${quality === item.name ? 'text-[#0084ff] bg-white/10 font-bold' : 'text-gray-300 hover:bg-white/5'}`}>
-                        <span>{item.name}</span>{quality === item.name && <svg className="w-4 h-4 fill-current text-[#0084ff]" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
+
+          {/* MORE IN CATEGORY SIDE PANEL */}
+          {activeChannel && (
+            <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
+                </h3>
+                
+                <button 
+                  onClick={toggleAutoFit}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold transition-colors border shadow-sm ${
+                    isZoomed ? 'bg-[#0084ff]/20 text-[#0084ff] border-[#0084ff]/50 hover:bg-[#0084ff]/30' : 'bg-blue-900/40 text-blue-300 border-blue-400/20 hover:bg-blue-900/60'
+                  }`}
+                  title="Toggle Full Screen Auto-Fit"
+                >
+                  {isZoomed ? <Minimize size={12} /> : <Maximize size={12} />}
+                  AUTO FIT: {isZoomed ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              
+              <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none no-scrollbar">
+                {similarChannels.map((c, idx) => (
+                  <div key={idx} className="flex-shrink-0 w-[90px]">
+                    <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden landscape:grid md:grid grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none no-scrollbar content-start">
+                {similarChannels.map((c, idx) => (
+                  <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
       </main>
     </div>
