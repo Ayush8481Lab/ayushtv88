@@ -1160,7 +1160,7 @@ export default function PerfectPlayerUI() {
                 <div className={`flex items-center justify-between ${pointerEventsClass} w-full pt-4 pl-4`}>
                   <div className="flex items-center gap-3">
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white">
-                      <ArrowLeft size={38} className="text-white" />
+                      <ArrowLeft size={34} className="text-white" />
                     </button>
                     <div className="text-white text-lg md:text-xl font-bold truncate max-w-[200px] md:max-w-md">{activeChannel?.name}</div>
                     <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-pink-500">
@@ -1262,13 +1262,7 @@ export default function PerfectPlayerUI() {
                 )}
               </div>
               
-              <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none no-scrollbar">
-                {similarChannels.map((c, idx) => (
-                  <div key={idx} className="flex-shrink-0 w-[90px]">
-                    <ChannelCard channel={c} isActive={false} onClick={handleChannelSelect} />
-                  </div>
-                ))}
-              </div>
+    
 
               <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none no-scrollbar content-start flex-1">
   {similarChannels.map((c, idx) => (
