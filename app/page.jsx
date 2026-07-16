@@ -43,7 +43,7 @@ const setCachedLogo = async (url, blob) => {
 };
 
 // ==========================================
-// OPTIMIZED CARD COMPONENT (With IDB Caching)
+// OPTIMIZED CARD COMPONENT 
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   const [loaded, setLoaded] = useState(false);
@@ -74,13 +74,13 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
     <button
       onClick={() => onClick(channel)}
       title={channel.name}
-      className={`relative w-full aspect-square bg-[#0a182b] rounded-xl p-2 md:p-3 flex items-center justify-center 
+      className={`relative w-full aspect-square rounded-xl p-2 md:p-3 flex items-center justify-center 
         transition-all duration-300 ease-in-out hover:scale-105 active:scale-95
-        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)] bg-white' : 'border border-blue-900/20 shadow-sm bg-white/5'}`}
+        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)] bg-white' : 'border border-gray-200/40 shadow-sm bg-white hover:border-[#0084ff]/50'}`}
     >
       {(!loaded || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-2">
-          <span className="text-[10px] md:text-xs font-bold text-gray-400 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
+          <span className="text-[10px] md:text-xs font-black text-gray-800 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
         </div>
       )}
       {imgSrc && (
@@ -118,7 +118,6 @@ ${base}/live_720p/chunks.m3u8`;
 
 const CATEGORY_ORDER = ['All', 'Premium', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
 
-// Format time utility
 const formatDuration = (seconds) => {
   if (isNaN(seconds) || seconds === Infinity) return '0:00';
   const h = Math.floor(seconds / 3600);
@@ -135,26 +134,26 @@ const formatLiveLatency = (seconds) => {
   return `-${m.toString().padStart(2, '0')}:${remS.toString().padStart(2, '0')}`;
 };
 
+const CheckIcon = () => (
+  <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+);
+
 export default function PerfectPlayerUI() {
-  // Core States
   const [isMounted, setIsMounted] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [playerError, setPlayerError] = useState(null);
 
-  // Data States
   const [channels, setChannels] = useState([]);
   const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [favorites, setFavorites] = useState([]);
   const [lastPlayed, setLastPlayed] = useState(null);
 
-  // UI States
   const [activeChannel, setActiveChannel] = useState(null);
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   
-  // Custom Player States
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -162,36 +161,30 @@ export default function PerfectPlayerUI() {
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
   
-  // Media Quality States
-  const [quality, setQuality] = useState('Auto');
-  const [activeResolution, setActiveResolution] = useState('');
-  const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
+  // Media Quality & Strict Management
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
+  const [activeResolution, setActiveResolution] = useState('');
   
-  const [audioTracks, setAudioTracks] = useState([]);
-  const [selectedAudio, setSelectedAudio] = useState(null);
+  const [videoQuality, setVideoQuality] = useState('Auto'); // 'Auto' or height (e.g. 720)
+  const [audioQuality, setAudioQuality] = useState('Auto'); // 'Auto' or bandwidth
   
-  // LIVE Stream States
+  const [availableVideoHeights, setAvailableVideoHeights] = useState([]);
+  const [availableAudioBandwidths, setAvailableAudioBandwidths] = useState([]);
+  
   const [isLiveStream, setIsLiveStream] = useState(false);
   const [liveLatencyText, setLiveLatencyText] = useState('LIVE');
   const [seekRange, setSeekRange] = useState({ start: 0, end: 100 });
   
-  // Skip Animations & Pinch Zoom
   const [skipAccumulator, setSkipAccumulator] = useState(0);
   const [skipSide, setSkipSide] = useState(null);
   const [isZoomed, setIsZoomed] = useState(false);
   const [zoomMessage, setZoomMessage] = useState('');
 
-  // Refs
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
-  
-  const isManualAudioSwitch = useRef(false);
-  const isUserManualAudio = useRef(false); 
-  const isUserManualVideo = useRef(false); 
   
   const controlsTimeoutRef = useRef(null);
   const skipTimeoutRef = useRef(null);
@@ -228,7 +221,7 @@ export default function PerfectPlayerUI() {
     }
   }, []);
 
-  // Smart Fullscreen & Orientation Listeners
+  // Strict Landscape & Portrait Fullscreen Handlers
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -238,20 +231,25 @@ export default function PerfectPlayerUI() {
   useEffect(() => {
     const handleOrientationChange = () => {
       if (!activeChannelRef.current || !containerRef.current) return;
-      setTimeout(() => {
+      setTimeout(async () => {
         const isLandscape = window.innerWidth > window.innerHeight;
-        if (isLandscape && !document.fullscreenElement) {
-           containerRef.current.requestFullscreen().catch(()=>{});
-        } else if (!isLandscape && document.fullscreenElement) {
-           document.exitFullscreen().catch(()=>{});
-        }
-      }, 300);
+        try {
+          if (isLandscape && !document.fullscreenElement) {
+             await containerRef.current.requestFullscreen();
+          } else if (!isLandscape && document.fullscreenElement) {
+             await document.exitFullscreen();
+          }
+        } catch (e) {}
+      }, 500);
     };
     window.addEventListener('orientationchange', handleOrientationChange);
-    return () => window.removeEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleOrientationChange); 
+    return () => {
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('resize', handleOrientationChange);
+    };
   }, []);
 
-  // Auto PiP on background
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'hidden' && activeChannelRef.current && videoRef.current) {
@@ -380,7 +378,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION (NO DEFAULT UI)
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION 
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -392,63 +390,22 @@ export default function PerfectPlayerUI() {
       const player = new shaka.Player(videoRef.current);
       
       player.addEventListener('error', (e) => {
-        console.error('Shaka Player Error', e.detail);
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
       player.addEventListener('variantchanged', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active && active.height) {
-          setActiveResolution(`${active.height}p`);
-        }
+        if (active && active.height) setActiveResolution(`${active.height}p`);
       });
 
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
-        
-        // Setup Video Qualities
-        const uniqueVideo = new Map();
-        tracks.forEach(t => { if (t.height && !uniqueVideo.has(t.height)) uniqueVideo.set(t.height, t); });
-        const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
-        setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
+        const heights = [...new Set(tracks.map(t => t.height).filter(Boolean))].sort((a, b) => b - a);
+        setAvailableVideoHeights(heights);
 
-        // Setup Audio Qualities
-        const uniqueAudio = new Map();
-        tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
-        const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
-        setAudioTracks(sortedAudio);
-        
-        const active = tracks.find(t => t.active);
-        if (active && !isUserManualAudio.current) setSelectedAudio(active.audioBandwidth);
-      });
-
-      player.addEventListener('adaptation', () => {
-        if (isManualAudioSwitch.current || !playerRef.current || isUserManualAudio.current) return;
-        const tracks = playerRef.current.getVariantTracks();
-        const active = tracks.find(t => t.active);
-        if (!active || !active.height) return;
-
-        setActiveResolution(`${active.height}p`);
-
-        const peers = tracks.filter(t => t.height === active.height);
-        if (peers.length <= 1) return;
-
-        peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
-        let targetTrack = peers[peers.length - 1]; 
-
-        if (targetTrack && targetTrack.id !== active.id) {
-            isManualAudioSwitch.current = true;
-            playerRef.current.selectVariantTrack(targetTrack, false);
-            setSelectedAudio(targetTrack.audioBandwidth);
-            
-            setTimeout(() => {
-                if (playerRef.current && !isUserManualAudio.current && !isUserManualVideo.current) {
-                  playerRef.current.configure({ abr: { enabled: true } });
-                }
-                isManualAudioSwitch.current = false;
-            }, 6000);
-        }
+        const audios = [...new Set(tracks.map(t => t.audioBandwidth).filter(Boolean))].sort((a, b) => b - a);
+        setAvailableAudioBandwidths(audios);
       });
 
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
@@ -479,6 +436,51 @@ export default function PerfectPlayerUI() {
     return () => { if (playerRef.current) playerRef.current.destroy(); };
   }, [isMounted, isOffline]);
 
+  // Strict Enforcement for Video & Audio Variants Selection
+  useEffect(() => {
+    if (!playerRef.current || availableVideoHeights.length === 0) return;
+    const player = playerRef.current;
+    const tracks = player.getVariantTracks();
+    if (!tracks.length) return;
+
+    let targetAudioBw = audioQuality === 'Auto' 
+        ? Math.max(...tracks.map(t => t.audioBandwidth || 0)) 
+        : Number(audioQuality);
+
+    if (videoQuality === 'Auto') {
+       // Enable ABR but strict-lock variant selections to only specific audio bandwidth.
+       player.configure({
+         abr: {
+           enabled: true,
+           restrictions: {
+             minAudioBandwidth: targetAudioBw,
+             maxAudioBandwidth: targetAudioBw
+           }
+         }
+       });
+
+       const active = tracks.find(t => t.active);
+       if (active && active.audioBandwidth !== targetAudioBw) {
+           const exactTrack = tracks.find(t => t.height === active.height && t.audioBandwidth === targetAudioBw);
+           if (exactTrack) player.selectVariantTrack(exactTrack, true, false);
+       }
+    } else {
+       // Manual selection logic 
+       player.configure({ abr: { enabled: false } });
+       const targetHeight = Number(videoQuality);
+       
+       let bestTrack = tracks.find(t => t.height === targetHeight && t.audioBandwidth === targetAudioBw);
+       
+       if (!bestTrack) {
+          const peers = tracks.filter(t => t.height === targetHeight);
+          peers.sort((a,b) => Math.abs((a.audioBandwidth||0) - targetAudioBw) - Math.abs((b.audioBandwidth||0) - targetAudioBw));
+          bestTrack = peers[0];
+       }
+       
+       if (bestTrack) player.selectVariantTrack(bestTrack, true, false);
+    }
+  }, [videoQuality, audioQuality, availableVideoHeights, availableAudioBandwidths]);
+
   // 4. INSTANT PLAYBACK ENGINE
   useEffect(() => {
     if (!playerRef.current) return;
@@ -487,16 +489,19 @@ export default function PerfectPlayerUI() {
       setPlayerError(null);
       setIsPlaying(false);
       setIsLiveStream(false);
-      isUserManualAudio.current = false; 
-      isUserManualVideo.current = false;
       return;
     }
     const loadStream = async () => {
       try {
         setPlayerError(null);
         setIsBuffering(true);
-        isUserManualVideo.current = false; 
-        setQuality('Auto');
+        
+        // Reset Strict selections to defaults for seamless transition
+        setVideoQuality('Auto');
+        setAudioQuality('Auto');
+        setActiveResolution('');
+        setAvailableVideoHeights([]);
+        setAvailableAudioBandwidths([]);
         
         let drmConfig = { clearKeys: {} };
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
@@ -690,32 +695,6 @@ export default function PerfectPlayerUI() {
     } catch (err) {}
   };
 
-  const selectQuality = (item) => {
-    if (!playerRef.current) return;
-    if (item.index === -1) {
-      isUserManualVideo.current = false;
-      playerRef.current.configure({ abr: { enabled: true } });
-      setQuality('Auto');
-    } else {
-      isUserManualVideo.current = true;
-      playerRef.current.configure({ abr: { enabled: false } });
-      playerRef.current.selectVariantTrack(item.track, true, false);
-      setQuality(item.name);
-    }
-    setShowPlayerSettings(false);
-  };
-
-  const handleAudioManualChange = (e) => {
-    const targetBw = Number(e.target.value);
-    setSelectedAudio(targetBw);
-    isUserManualAudio.current = true; 
-    if (playerRef.current) {
-      const tracks = playerRef.current.getVariantTracks();
-      const targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
-      if (targetTrack) playerRef.current.selectVariantTrack(targetTrack, true, false);
-    }
-  };
-
   const handleChannelSelect = useCallback((channel) => {
     if (!activeChannelRef.current && typeof window !== 'undefined') window.history.pushState({ playerOpen: true }, '');
     else if (typeof window !== 'undefined') window.history.replaceState({ playerOpen: true }, '');
@@ -806,7 +785,6 @@ export default function PerfectPlayerUI() {
         .dly-1 { animation-delay: 0.1s; }
         .dly-2 { animation-delay: 0.2s; }
         
-        /* Premium Bottom Sheet / Modal Animations */
         @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .yt-modal-mobile { animation: popUpModalMobile 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
@@ -955,12 +933,12 @@ export default function PerfectPlayerUI() {
                 <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
               </div>
 
-              {/* PERFECTLY CENTERED BUFFERING SPINNER - Z-40 */}
+              {/* BUFFERING SPINNER - Z-40 */}
               <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
-              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - Z-40 */}
+              {/* CENTER CONTROLS - Z-40 */}
               <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 w-full pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                 <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
@@ -981,52 +959,78 @@ export default function PerfectPlayerUI() {
                 </button>
               </div>
 
-              {/* YOUTUBE-STYLE SETTINGS MODAL - Z-[60] - Renders in front of absolutely everything */}
+              {/* YOUTUBE-STYLE SETTINGS MODAL - Z-[60] */}
               {showPlayerSettings && (
                 <div 
-                  className="absolute inset-0 z-[60] flex items-end md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
+                  className="absolute inset-0 z-[60] flex items-end landscape:items-center md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
                   onClick={() => setShowPlayerSettings(false)}
                 >
                   <div 
                     onClick={(e) => e.stopPropagation()} 
-                    className="bg-[#212121] w-full md:w-[320px] max-h-[75vh] flex flex-col rounded-t-2xl md:rounded-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] border border-white/5 yt-modal-mobile md:yt-modal-desktop overflow-hidden"
+                    className="bg-[#212121] w-full md:w-[320px] landscape:w-[320px] max-h-[85vh] landscape:max-h-[90vh] flex flex-col rounded-t-2xl md:rounded-2xl landscape:rounded-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] border border-white/5 yt-modal-mobile md:yt-modal-desktop overflow-hidden relative"
                   >
-                    <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-[#282828] z-10 shadow-sm">
-                      <span className="text-white text-sm font-bold tracking-wide">Video Quality</span>
+                    <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between bg-[#282828] z-20 shadow-sm shrink-0">
+                      <span className="text-white text-sm font-bold tracking-wide">Settings</span>
                       <button onClick={() => setShowPlayerSettings(false)} className="text-gray-400 hover:text-white transition">
                         <X size={20} />
                       </button>
                     </div>
                     
-                    <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-                      {availableQualities.map((item) => {
-                        const isAuto = item.index === -1;
-                        const displayName = isAuto && activeResolution ? `Auto (${activeResolution})` : item.name;
-                        const isActive = quality === item.name;
-                        
-                        return (
-                          <button 
-                            key={item.index} 
-                            onClick={() => selectQuality(item)} 
-                            className="w-full text-left px-5 py-4 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
-                          >
-                            <span className={isActive ? 'font-black text-white' : 'font-medium'}>{displayName}</span>
-                            {isActive && (
-                              <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
-                            )}
-                          </button>
-                        )
-                      })}
+                    <div className="flex-1 overflow-y-auto no-scrollbar py-2 pb-6 relative">
+                      {/* Video Settings */}
+                      <div className="px-5 py-2 text-[10px] md:text-xs font-black text-[#0084ff] uppercase tracking-widest sticky top-0 bg-[#212121] z-10 shadow-[0_4px_10px_-4px_rgba(0,0,0,0.3)]">Video Quality</div>
+                      
+                      <button 
+                        onClick={() => setVideoQuality('Auto')} 
+                        className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
+                      >
+                        <span className={videoQuality === 'Auto' ? 'font-black text-white' : 'font-medium'}>
+                          Auto {videoQuality === 'Auto' && activeResolution ? `(${activeResolution})` : ''}
+                        </span>
+                        {videoQuality === 'Auto' && <CheckIcon />}
+                      </button>
+                      
+                      {availableVideoHeights.map(h => (
+                        <button 
+                          key={`vid-${h}`} 
+                          onClick={() => setVideoQuality(h)} 
+                          className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
+                        >
+                          <span className={videoQuality === h ? 'font-black text-white' : 'font-medium'}>{h}p</span>
+                          {videoQuality === h && <CheckIcon />}
+                        </button>
+                      ))}
+
+                      {/* Audio Settings */}
+                      <div className="px-5 py-2 mt-2 border-t border-white/10 text-[10px] md:text-xs font-black text-[#0084ff] uppercase tracking-widest sticky top-0 bg-[#212121] z-10 pt-4 shadow-[0_4px_10px_-4px_rgba(0,0,0,0.3)]">Audio Quality</div>
+                      
+                      <button 
+                        onClick={() => setAudioQuality('Auto')} 
+                        className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
+                      >
+                        <span className={audioQuality === 'Auto' ? 'font-black text-white' : 'font-medium'}>Highest (Auto)</span>
+                        {audioQuality === 'Auto' && <CheckIcon />}
+                      </button>
+
+                      {availableAudioBandwidths.map(b => (
+                        <button 
+                          key={`aud-${b}`} 
+                          onClick={() => setAudioQuality(b)} 
+                          className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
+                        >
+                          <span className={audioQuality === b ? 'font-black text-white' : 'font-medium'}>{Math.round(b/1000)} kbps</span>
+                          {audioQuality === b && <CheckIcon />}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* CONTROLS OVERLAY (Top & Bottom Bars) - Z-30 */}
+              {/* CONTROLS OVERLAY - Z-30 */}
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
-                {/* Top Bar */}
                 <div className={`flex items-center justify-between ${pointerEventsClass} w-full`}>
                   <div className="flex items-center gap-3">
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md">
@@ -1039,7 +1043,6 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
 
-                {/* Bottom Bar */}
                 <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto relative z-10`}>
                   
                   <div className="relative flex items-center w-full mb-1 px-[10px]">
@@ -1055,7 +1058,6 @@ export default function PerfectPlayerUI() {
                   </div>
 
                   <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md">
-                    
                     {isLiveStream ? (
                       <div className="flex items-center font-bold tracking-wide text-sm">
                         {liveLatencyText === 'LIVE' ? (
@@ -1116,20 +1118,6 @@ export default function PerfectPlayerUI() {
                 <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
-                
-                {audioTracks.length > 1 && (
-                  <select
-                    className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors"
-                    value={selectedAudio || ''}
-                    onChange={handleAudioManualChange}
-                  >
-                    {audioTracks.map(t => (
-                      <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
-                        Audio: {Math.round(t.audioBandwidth / 1000)} kbps
-                      </option>
-                    ))}
-                  </select>
-                )}
               </div>
               
               <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none no-scrollbar">
