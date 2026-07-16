@@ -164,7 +164,7 @@ export default function PerfectPlayerUI() {
   
   // Media Quality States
   const [quality, setQuality] = useState('Auto');
-  const [activeResolution, setActiveResolution] = useState(''); // Stores actively playing resolution for "Auto (1080p)" display
+  const [activeResolution, setActiveResolution] = useState('');
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
   
@@ -190,8 +190,8 @@ export default function PerfectPlayerUI() {
   const activeChannelRef = useRef(null);
   
   const isManualAudioSwitch = useRef(false);
-  const isUserManualAudio = useRef(false); // Permanently disable auto-audio if user manually changes
-  const isUserManualVideo = useRef(false); // Protects manual video quality from audio hijacker overriding ABR
+  const isUserManualAudio = useRef(false); 
+  const isUserManualVideo = useRef(false); 
   
   const controlsTimeoutRef = useRef(null);
   const skipTimeoutRef = useRef(null);
@@ -407,7 +407,6 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
-      // Track active variant for "Auto (1080p)" YouTube UI Feature
       player.addEventListener('variantchanged', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
@@ -416,7 +415,6 @@ export default function PerfectPlayerUI() {
         }
       });
 
-      // Populate Qualities & Audio Tracks for Custom Settings Menus
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
         
@@ -436,36 +434,31 @@ export default function PerfectPlayerUI() {
         if (active && !isUserManualAudio.current) setSelectedAudio(active.audioBandwidth);
       });
 
-      // 100% GUARANTEED HIGHEST AUDIO QUALITY HIJACKER
       player.addEventListener('adaptation', () => {
         if (isManualAudioSwitch.current || !playerRef.current || isUserManualAudio.current) return;
         const tracks = playerRef.current.getVariantTracks();
         const active = tracks.find(t => t.active);
         if (!active || !active.height) return;
 
-        // Extract current auto-resolution for UI display
         setActiveResolution(`${active.height}p`);
 
-        // Isolate tracks sharing the same video resolution
         const peers = tracks.filter(t => t.height === active.height);
         if (peers.length <= 1) return;
 
-        // Sort ascending by audioBandwidth and explicitly select the highest one
         peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
         let targetTrack = peers[peers.length - 1]; 
 
         if (targetTrack && targetTrack.id !== active.id) {
             isManualAudioSwitch.current = true;
-            playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = instant switch without freeze
+            playerRef.current.selectVariantTrack(targetTrack, false);
             setSelectedAudio(targetTrack.audioBandwidth);
             
             setTimeout(() => {
-                // Ensure we don't accidentally turn ABR back on if the user MANUALLY locked the video quality!
                 if (playerRef.current && !isUserManualAudio.current && !isUserManualVideo.current) {
                   playerRef.current.configure({ abr: { enabled: true } });
                 }
                 isManualAudioSwitch.current = false;
-            }, 6000); // 6s cooldown prevents ABR looping
+            }, 6000);
         }
       });
 
@@ -513,7 +506,7 @@ export default function PerfectPlayerUI() {
       try {
         setPlayerError(null);
         setIsBuffering(true);
-        isUserManualVideo.current = false; // Reset to ABR initially on load
+        isUserManualVideo.current = false; 
         setQuality('Auto');
         
         let drmConfig = { clearKeys: {} };
@@ -538,7 +531,6 @@ export default function PerfectPlayerUI() {
         if (forceMimeType) await playerRef.current.load(finalUrl, null, forceMimeType);
         else await playerRef.current.load(finalUrl);
 
-        // Force Autoplay after loading successfully
         if (videoRef.current) {
           videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
         }
@@ -570,7 +562,7 @@ export default function PerfectPlayerUI() {
       setSeekRange(range);
       
       const latency = range.end - current;
-      if (latency <= 12) { // 12 seconds buffer for live threshold
+      if (latency <= 12) { 
         setLiveLatencyText('LIVE');
       } else {
         setLiveLatencyText(formatLiveLatency(latency));
@@ -592,7 +584,6 @@ export default function PerfectPlayerUI() {
     if (videoRef.current) videoRef.current.currentTime = nextTime;
   };
 
-  // Handle Playback UI Events
   const resetControlsTimer = () => {
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     if (isPlaying) controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
@@ -646,7 +637,6 @@ export default function PerfectPlayerUI() {
     }, 800);
   };
 
-  // YouTube Style Pinch to Zoom Handlers
   const handleTouchStart = (e) => {
     if (e.touches.length === 2 && (document.fullscreenElement || window.innerWidth > window.innerHeight)) {
       const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -734,11 +724,10 @@ export default function PerfectPlayerUI() {
   const handleAudioManualChange = (e) => {
     const targetBw = Number(e.target.value);
     setSelectedAudio(targetBw);
-    isUserManualAudio.current = true; // Permanently disable audio hijacker
+    isUserManualAudio.current = true; 
     if (playerRef.current) {
       const tracks = playerRef.current.getVariantTracks();
       const targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
-      // Pass clearBuffer = true to force INSTANT switch
       if (targetTrack) playerRef.current.selectVariantTrack(targetTrack, true, false);
     }
   };
@@ -755,7 +744,7 @@ export default function PerfectPlayerUI() {
   const handleUiBack = () => {
     setActiveChannel(null);
     if (window.history.state && window.history.state.playerOpen) {
-      window.history.back(); // Clean browser history seamlessly
+      window.history.back();
     }
   };
 
@@ -802,7 +791,6 @@ export default function PerfectPlayerUI() {
     );
   }
 
-  // Calculate Blue Glider Progress safely
   let progressPercent = 0;
   if (isLiveStream) {
     const rangeLen = seekRange.end - seekRange.start;
@@ -819,7 +807,6 @@ export default function PerfectPlayerUI() {
   return (
     <div className="flex h-[100dvh] w-full bg-[#070b13] text-white font-sans overflow-hidden selection:bg-[#0084ff]/30">
       
-      {/* CUSTOM CSS FROM MOVIEPLAYERCLIENT */}
       <style dangerouslySetInnerHTML={{ __html: `
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -836,7 +823,6 @@ export default function PerfectPlayerUI() {
         .dly-2 { animation-delay: 0.2s; }
       `}} />
 
-      {/* SIDEBAR (Main Grid View) */}
       <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
         <div className="p-4 flex flex-shrink-0 items-center justify-between border-b border-blue-400/10 bg-[#0a182b]">
           <div className="flex items-center gap-2 text-[#0084ff]">
@@ -909,7 +895,6 @@ export default function PerfectPlayerUI() {
         </div>
       </aside>
 
-      {/* RESTORED SPLIT-SCREEN PLAYER UI */}
       <main className={`flex-col bg-black z-20 transition-all duration-0 ${activeChannel ? 'flex w-full h-[100dvh]' : 'hidden md:flex flex-1 h-[100dvh]'}`}>
         
         <div className="flex flex-col landscape:flex-row md:flex-row flex-1 overflow-hidden">
@@ -948,7 +933,6 @@ export default function PerfectPlayerUI() {
                 autoPictureInPicture={true}
               />
 
-              {/* INTERACTION SHIELD & PINCH LISTENER */}
               <div 
                 onClick={handleInteraction} 
                 onTouchStart={handleTouchStart} 
@@ -957,15 +941,14 @@ export default function PerfectPlayerUI() {
                 className="absolute inset-0 z-10 cursor-pointer touch-none" 
               />
 
-              {/* YOUTUBE STYLE ZOOM TOAST */}
               {zoomMessage && (
                 <div className="absolute top-[80px] left-1/2 -translate-x-1/2 bg-black/80 text-white px-5 py-2 rounded-full text-sm font-bold tracking-wide z-50 pointer-events-none transition-opacity duration-300 shadow-xl backdrop-blur-sm">
                   {zoomMessage}
                 </div>
               )}
 
-              {/* SKIP ANIMATIONS */}
-              <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
+              {/* SKIP ANIMATIONS - BUMPED TO Z-40 */}
+              <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-40 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="flex text-white drop-shadow-lg">
                   <svg className="w-9 h-9 anim-arr-l" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
                   <svg className="w-9 h-9 anim-arr-l dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
@@ -973,7 +956,7 @@ export default function PerfectPlayerUI() {
                 </div>
                 <span className="text-white text-sm font-bold mt-2 drop-shadow-md">-{Math.abs(skipAccumulator)}s</span>
               </div>
-              <div className={`absolute right-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'right' ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`absolute right-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-40 transition-opacity duration-200 ${skipSide === 'right' ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="flex text-white drop-shadow-lg">
                   <svg className="w-9 h-9 anim-arr-r dly-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                   <svg className="w-9 h-9 anim-arr-r dly-1 -ml-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
@@ -982,17 +965,17 @@ export default function PerfectPlayerUI() {
                 <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
               </div>
 
-              {/* PERFECTLY CENTERED BUFFERING SPINNER */}
-              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
+              {/* PERFECTLY CENTERED BUFFERING SPINNER - BUMPED TO Z-40 */}
+              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
-              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP (Geometrically Exact Center) */}
-              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-20 w-full transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
+              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - BUMPED TO Z-40 and wrapper is pointer-events-none so it doesn't block middle screen clicks */}
+              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 w-full pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+                <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                 </button>
-                <div className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md ${pointerEventsClass}`}>
+                <div className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   {!isBuffering && (
                     <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
                       {isPlaying ? (
@@ -1003,12 +986,12 @@ export default function PerfectPlayerUI() {
                     </button>
                   )}
                 </div>
-                <button onClick={(e) => handleButtonSkip(false, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
+                <button onClick={(e) => handleButtonSkip(false, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
                 </button>
               </div>
 
-              {/* CONTROLS OVERLAY (Top & Bottom Bars) */}
+              {/* CONTROLS OVERLAY (Top & Bottom Bars) - Stays Z-30 */}
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
@@ -1028,7 +1011,6 @@ export default function PerfectPlayerUI() {
                 {/* Bottom Bar */}
                 <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto relative z-10`}>
                   
-                  {/* Range Slider / Blue Glider With 0.25cm Space (px-[10px]) on edges */}
                   <div className="relative flex items-center w-full mb-1 px-[10px]">
                     <input 
                       type="range" 
@@ -1041,10 +1023,8 @@ export default function PerfectPlayerUI() {
                     />
                   </div>
 
-                  {/* Settings & Time Icons */}
                   <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md">
                     
-                    {/* Time / Live Latency Sync with Go Live Button */}
                     {isLiveStream ? (
                       <div className="flex items-center font-bold tracking-wide text-sm">
                         {liveLatencyText === 'LIVE' ? (
@@ -1096,7 +1076,6 @@ export default function PerfectPlayerUI() {
 
                 </div>
 
-                {/* YOUTUBE STYLE WHITE SETTINGS MODAL */}
                 {showPlayerSettings && (
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl py-3 shadow-[0_0_40px_rgba(0,0,0,0.5)] z-50 w-64 text-left pointer-events-auto keep-menus-open font-sans">
                     <div className="px-5 py-2 border-b border-gray-100 text-black text-sm font-extrabold mb-1">
@@ -1121,7 +1100,6 @@ export default function PerfectPlayerUI() {
             </div>
           </div>
 
-          {/* MORE IN CATEGORY SIDE PANEL */}
           {activeChannel && (
             <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
               <div className="flex items-center justify-between mb-3 flex-shrink-0">
@@ -1129,7 +1107,6 @@ export default function PerfectPlayerUI() {
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
                 
-                {/* MANUAL AUDIO QUALITY SELECTOR */}
                 {audioTracks.length > 1 && (
                   <select
                     className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors"
