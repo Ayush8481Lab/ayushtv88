@@ -161,7 +161,9 @@ export default function PerfectPlayerUI() {
   const [quality, setQuality] = useState('Auto');
   const [activeResolution, setActiveResolution] = useState('');
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
-  const [showPlayerSettings, setShowPlayerSettings] = useState(false);
+  
+  // NEW: Tabbed Settings System ('video' | 'audio' | null)
+  const [settingsTab, setSettingsTab] = useState(null); 
   
   const [audioTracks, setAudioTracks] = useState([]);
   const [selectedAudio, setSelectedAudio] = useState(null);
@@ -181,12 +183,11 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   
   const activeChannelRef = useRef(null);
-  const showPlayerSettingsRef = useRef(false);
+  const settingsTabRef = useRef(null);
   const showControlsRef = useRef(true);
   
   const isManualAudioSwitch = useRef(false);
   const isUserManualAudio = useRef(false); 
-  const selectedAudioRef = useRef(null); 
   const isUserManualVideo = useRef(false); 
   
   const controlsTimeoutRef = useRef(null);
@@ -223,31 +224,29 @@ export default function PerfectPlayerUI() {
     }
   }, []);
 
-  useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
-  useEffect(() => { showPlayerSettingsRef.current = showPlayerSettings; }, [showPlayerSettings]);
-  useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
-
-  // ==========================================
-  // EXTREME FOCUS LOCK & CURSOR KILLER (Fire TV/Silk)
-  // ==========================================
+  // TV Cursor Hider & State Sync
   useEffect(() => {
-    if (!isMounted || isLoading) return;
-    const lockFocus = () => {
-      if (document.activeElement && document.activeElement.tagName !== 'BODY' && document.activeElement.tagName !== 'HTML') return;
-      if (showPlayerSettingsRef.current) {
-        const firstOpt = document.querySelector('.quality-btn');
-        if (firstOpt) firstOpt.focus({ preventScroll: true });
-      } else if (activeChannelRef.current) {
-        const playBtn = document.getElementById('play-pause-btn') || document.getElementById('settings-btn');
-        if (playBtn) playBtn.focus({ preventScroll: true });
-      } else {
-        const firstCard = document.querySelector('.channel-card-btn');
-        if (firstCard) firstCard.focus({ preventScroll: true });
+    const handleTVInteraction = (e) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key) || e.keyCode === 23) {
+        document.body.classList.add('tv-mode-active');
+      } else if (e.type === 'mousemove' || e.type === 'touchstart') {
+        document.body.classList.remove('tv-mode-active');
       }
     };
-    const focusInterval = setInterval(lockFocus, 500);
-    return () => clearInterval(focusInterval);
-  }, [activeChannel, showPlayerSettings, isLoading]);
+    window.addEventListener('keydown', handleTVInteraction, true);
+    window.addEventListener('mousemove', handleTVInteraction, true);
+    window.addEventListener('touchstart', handleTVInteraction, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleTVInteraction, true);
+      window.removeEventListener('mousemove', handleTVInteraction, true);
+      window.removeEventListener('touchstart', handleTVInteraction, true);
+    }
+  }, []);
+
+  useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
+  useEffect(() => { settingsTabRef.current = settingsTab; }, [settingsTab]);
+  useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
 
   // ==========================================
   // TV SPATIAL NAVIGATION ENGINE
@@ -330,13 +329,12 @@ export default function PerfectPlayerUI() {
       const isEnter = e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23;
       const isBack = e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009 || e.keyCode === 27;
 
-      // Aggressive capture phase block to destroy Silk Virtual Mouse
       if ((isUp || isDown || isLeft || isRight) && !isInput) {
         e.preventDefault(); 
         e.stopPropagation();
       }
 
-      if (e.type !== 'keydown') return; // Only process actual navigation on keydown
+      if (e.type !== 'keydown') return;
 
       if (['MediaPlayPause', 'MediaPlay', 'MediaPause'].includes(e.code) || e.key === 'MediaPlayPause' || e.keyCode === 179) {
         e.preventDefault();
@@ -352,8 +350,8 @@ export default function PerfectPlayerUI() {
         if (isInput) return;
         e.preventDefault();
         e.stopPropagation();
-        if (showPlayerSettingsRef.current) {
-          setShowPlayerSettings(false);
+        if (settingsTabRef.current) {
+          setSettingsTab(null);
           setTimeout(() => document.getElementById('settings-btn')?.focus(), 50);
         } else if (activeChannelRef.current) {
           setActiveChannel(null); 
@@ -365,10 +363,9 @@ export default function PerfectPlayerUI() {
       if (isUp || isDown || isLeft || isRight) {
         if (isInput) return; 
 
-        const isWatchingVideo = activeChannelRef.current && !showPlayerSettingsRef.current;
+        const isWatchingVideo = activeChannelRef.current && !settingsTabRef.current;
         const controlsVisible = showControlsRef.current;
 
-        // Perfect 10s skip and wake-up logic preserved exactly as requested
         if (isWatchingVideo && !controlsVisible) {
           if (isLeft) handleButtonSkip(true, null);
           else if (isRight) handleButtonSkip(false, null);
@@ -410,7 +407,6 @@ export default function PerfectPlayerUI() {
       }
     };
 
-    // Capture phase intercepts prevent Silk from processing mouse movements
     window.addEventListener('keydown', handleDpadEvents, { capture: true, passive: false });
     window.addEventListener('keyup', handleDpadEvents, { capture: true, passive: false });
     window.addEventListener('keypress', handleDpadEvents, { capture: true, passive: false });
@@ -442,20 +438,6 @@ export default function PerfectPlayerUI() {
     };
     window.addEventListener('orientationchange', handleOrientationChange);
     return () => window.removeEventListener('orientationchange', handleOrientationChange);
-  }, []);
-
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'hidden' && activeChannelRef.current && videoRef.current) {
-        try {
-          if (!videoRef.current.paused && document.pictureInPictureElement !== videoRef.current) {
-            await videoRef.current.requestPictureInPicture();
-          }
-        } catch (error) {}
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   // 2. Fetch Core APIs
@@ -677,7 +659,6 @@ export default function PerfectPlayerUI() {
       setIsLiveStream(false);
       isUserManualAudio.current = false; 
       isUserManualVideo.current = false;
-      selectedAudioRef.current = null;
       return;
     }
     const loadStream = async () => {
@@ -686,7 +667,6 @@ export default function PerfectPlayerUI() {
         setIsBuffering(true);
         isUserManualVideo.current = false; 
         isUserManualAudio.current = false;
-        selectedAudioRef.current = null;
         setQuality('Auto');
         
         let drmConfig = { clearKeys: {} };
@@ -694,12 +674,11 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
         
-        // Reset Restrictions fully
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 },
-          abr: { restrictions: { minAudioBandwidth: 0, maxAudioBandwidth: Infinity } } 
+          abr: { enabled: true, restrictions: { minAudioBandwidth: 0, maxAudioBandwidth: Infinity } } 
         });
 
         let finalUrl = activeChannel.url;
@@ -801,7 +780,6 @@ export default function PerfectPlayerUI() {
     else videoRef.current.pause();
   };
 
-  // PRESERVED PERFECT 10S SKIP
   const handleButtonSkip = (isLeft, e) => {
     if (e) e.stopPropagation();
     setShowControls(true);
@@ -911,31 +889,26 @@ export default function PerfectPlayerUI() {
       playerRef.current.selectVariantTrack(item.track, true, false);
       setQuality(item.name);
     }
-    setShowPlayerSettings(false);
+    setSettingsTab(null);
     setTimeout(() => document.getElementById('settings-btn')?.focus(), 50);
   };
 
-  // FIXED: Flawless Audio Matching (Prevents Video Quality Drop)
-  const handleAudioManualChange = (e) => {
-    const targetBw = Number(e.target.value);
+  // 100% FIXED AUDIO QUALITY LOCKDOWN
+  const handleAudioManualChange = (targetBw) => {
     setSelectedAudio(targetBw);
-    selectedAudioRef.current = targetBw;
     isUserManualAudio.current = true; 
     
     if (playerRef.current) {
+      // 1. Physically terminate ABR so it cannot ever override the quality drop
+      playerRef.current.configure({ abr: { enabled: false } });
+      
       const tracks = playerRef.current.getVariantTracks();
       const currentActive = tracks.find(t => t.active);
       const currentVideoHeight = currentActive ? currentActive.height : null;
 
-      // Lock ABR to only allow this audio bandwidth
-      playerRef.current.configure({
-        abr: { restrictions: { minAudioBandwidth: targetBw, maxAudioBandwidth: targetBw } }
-      });
-
-      // Find stream combining TARGET Audio + CURRENT Video
+      // 2. Lock to perfect combination of chosen audio + current video height
       let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === currentVideoHeight);
       
-      // Fallback logic
       if (!targetTrack) {
          const matchingAudio = tracks.filter(t => t.audioBandwidth === targetBw);
          if (matchingAudio.length > 0) {
@@ -946,8 +919,12 @@ export default function PerfectPlayerUI() {
 
       if (targetTrack) {
          playerRef.current.selectVariantTrack(targetTrack, true, false);
+         setQuality(targetTrack.height ? `${targetTrack.height}p` : 'Auto');
+         isUserManualVideo.current = true; // Video is now locked too
       }
     }
+    setSettingsTab(null);
+    setTimeout(() => document.getElementById('audio-settings-btn')?.focus(), 50);
   };
 
   const handleChannelSelect = useCallback((channel) => {
@@ -1026,7 +1003,10 @@ export default function PerfectPlayerUI() {
     <div className="flex h-[100dvh] w-full bg-[#070b13] text-white font-sans overflow-hidden selection:bg-[#0084ff]/30">
       
       <style dangerouslySetInnerHTML={{ __html: `
-        /* :focus-visible strictly disables borders for mobile touch, only applies for TV D-Pad */
+        /* Cursor Killer when TV Mode detects D-Pad */
+        body.tv-mode-active * { cursor: none !important; }
+        
+        /* Mobile Touch safe outline - only shows on TV Remote Focus */
         button:focus-visible, input:focus-visible, select:focus-visible, .tv-focusable:focus-visible {
           outline: 3px solid #0084ff !important;
           outline-offset: 3px !important;
@@ -1037,9 +1017,7 @@ export default function PerfectPlayerUI() {
         }
         
         /* Clear all tap highlights on mobile */
-        button:focus, input:focus, select:focus {
-          outline: none !important;
-        }
+        button:focus, input:focus, select:focus { outline: none !important; }
         
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -1122,6 +1100,7 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
               )}
+              {/* Giant bottom padding for perfect TV scroll centering */}
               <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3 pb-[150px]">
                 {filteredChannels.length > 0 ? (
                   filteredChannels.map((channel, idx) => (
@@ -1232,25 +1211,27 @@ export default function PerfectPlayerUI() {
                 </button>
               </div>
 
-              {/* YOUTUBE-STYLE SETTINGS MODAL */}
-              {showPlayerSettings && (
+              {/* UNIFIED SETTINGS MODAL (Video & Audio) */}
+              {settingsTab && (
                 <div 
                   className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
-                  onClick={() => setShowPlayerSettings(false)}
+                  onClick={() => setSettingsTab(null)}
                 >
                   <div 
                     onClick={(e) => e.stopPropagation()} 
                     className="bg-[#212121] w-full md:w-[320px] max-h-[75vh] flex flex-col rounded-t-2xl md:rounded-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] border border-white/5 yt-modal-mobile md:yt-modal-desktop overflow-hidden"
                   >
                     <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-[#282828] z-10 shadow-sm">
-                      <span className="text-white text-sm font-bold tracking-wide">Video Quality</span>
-                      <button tabIndex={0} onClick={() => setShowPlayerSettings(false)} className="text-gray-400 hover:text-white transition outline-none rounded-md p-1 tv-focusable">
+                      <span className="text-white text-sm font-bold tracking-wide">
+                        {settingsTab === 'video' ? 'Video Quality' : 'Audio Quality'}
+                      </span>
+                      <button tabIndex={0} onClick={() => setSettingsTab(null)} className="text-gray-400 hover:text-white transition outline-none rounded-md p-1 tv-focusable">
                         <X size={20} />
                       </button>
                     </div>
                     
                     <div className="flex-1 overflow-y-auto no-scrollbar py-2">
-                      {availableQualities.map((item, i) => {
+                      {settingsTab === 'video' && availableQualities.map((item, i) => {
                         const isAuto = item.index === -1;
                         const displayName = isAuto && activeResolution ? `Auto (${activeResolution})` : item.name;
                         const isActive = quality === item.name;
@@ -1263,9 +1244,24 @@ export default function PerfectPlayerUI() {
                             className="quality-btn w-full text-left px-5 py-4 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20 outline-none tv-focusable"
                           >
                             <span className={isActive ? 'font-black text-white' : 'font-medium'}>{displayName}</span>
-                            {isActive && (
-                              <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
-                            )}
+                            {isActive && <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
+                          </button>
+                        )
+                      })}
+
+                      {settingsTab === 'audio' && audioTracks.map((t, i) => {
+                        const isActive = selectedAudio === t.audioBandwidth;
+                        const displayKbps = Math.round(t.audioBandwidth / 1000) + ' kbps';
+
+                        return (
+                          <button 
+                            key={t.audioBandwidth} 
+                            tabIndex={0}
+                            onClick={() => handleAudioManualChange(t.audioBandwidth)} 
+                            className="quality-btn w-full text-left px-5 py-4 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20 outline-none tv-focusable"
+                          >
+                            <span className={isActive ? 'font-black text-white' : 'font-medium'}>{displayKbps}</span>
+                            {isActive && <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
                           </button>
                         )
                       })}
@@ -1339,11 +1335,19 @@ export default function PerfectPlayerUI() {
                     )}
 
                     <div className="flex items-center gap-4">
-                      <button tabIndex={0} onClick={togglePictureInPicture} className="p-1.5 text-white hover:text-[#0084ff] transition rounded-lg outline-none tv-focusable">
-                        <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" /><rect x="13" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none" /></svg>
-                      </button>
+                      
+                      {/* Audio Tracks Button replaces the ugly select */}
+                      {audioTracks.length > 1 && (
+                        <button tabIndex={0} id="audio-settings-btn" onClick={(e) => { e.stopPropagation(); setSettingsTab('audio'); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none tv-focusable flex items-center gap-1">
+                          <svg className="w-6 h-6 text-white drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                          </svg>
+                        </button>
+                      )}
 
-                      <button tabIndex={0} id="settings-btn" onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none tv-focusable">
+                      <button tabIndex={0} id="settings-btn" onClick={(e) => { e.stopPropagation(); setSettingsTab('video'); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none tv-focusable">
                         <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
                            <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
@@ -1370,21 +1374,6 @@ export default function PerfectPlayerUI() {
                 <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
-                
-                {audioTracks.length > 1 && (
-                  <select
-                    tabIndex={0}
-                    className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors tv-focusable"
-                    value={selectedAudio || ''}
-                    onChange={handleAudioManualChange}
-                  >
-                    {audioTracks.map(t => (
-                      <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
-                        Audio: {Math.round(t.audioBandwidth / 1000)} kbps
-                      </option>
-                    ))}
-                  </select>
-                )}
               </div>
               
               <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-6 scroll-smooth overscroll-none no-scrollbar">
