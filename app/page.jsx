@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
@@ -44,9 +43,9 @@ const setCachedLogo = async (url, blob) => {
 };
 
 // ==========================================
-// OPTIMIZED CARD COMPONENT (White Background)
+// OPTIMIZED CARD COMPONENT (WHITE BACKGROUND)
 // ==========================================
-const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
+const ChannelCard = React.memo(({ channel, isActive, onClick, extraClass = "" }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [imgSrc, setImgSrc] = useState(null);
@@ -76,13 +75,13 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
       tabIndex={0}
       onClick={() => onClick(channel)}
       title={channel.name}
-      className={`channel-card-btn relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
+      className={`channel-card-btn ${extraClass} relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
         transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 tv-focusable outline-none focus-visible:ring-4 focus-visible:ring-[#0084ff] focus-visible:scale-105 focus-visible:z-10
-        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)]' : 'border border-gray-200 shadow-sm'}`}
+        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.6)]' : 'border border-gray-200 shadow-sm'}`}
     >
       {(!loaded || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-2">
-          <span className="text-[10px] md:text-xs font-bold text-gray-600 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
+          <span className="text-[10px] md:text-xs font-bold text-gray-800 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
         </div>
       )}
       {imgSrc && (
@@ -229,7 +228,7 @@ export default function PerfectPlayerUI() {
   useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
 
   // ==========================================
-  // EXTREME FOCUS LOCK & CURSOR KILLER (Fire TV/Silk)
+  // SMART INITIAL FOCUS ENGINE (TV)
   // ==========================================
   useEffect(() => {
     if (!isMounted || isLoading) return;
@@ -242,6 +241,17 @@ export default function PerfectPlayerUI() {
         const playBtn = document.getElementById('play-pause-btn') || document.getElementById('settings-btn');
         if (playBtn) playBtn.focus({ preventScroll: true });
       } else {
+        // Start from Continue Playing if available, else Active Category
+        const continueCard = document.querySelector('.continue-watching-card');
+        if (continueCard) {
+            continueCard.focus({ preventScroll: true });
+            return;
+        }
+        const activeCat = document.querySelector('.category-btn[data-active="true"]') || document.querySelector('.category-btn');
+        if (activeCat) {
+            activeCat.focus({ preventScroll: true });
+            return;
+        }
         const firstCard = document.querySelector('.channel-card-btn');
         if (firstCard) firstCard.focus({ preventScroll: true });
       }
@@ -251,10 +261,10 @@ export default function PerfectPlayerUI() {
   }, [activeChannel, showPlayerSettings, isLoading]);
 
   // ==========================================
-  // TV SPATIAL NAVIGATION ENGINE
+  // LINEAR TV NAVIGATION (Media Keys Only)
   // ==========================================
   useEffect(() => {
-    const navigateFocus = (direction) => {
+    const navigateLinearFocus = (direction) => {
       const focusables = Array.from(document.querySelectorAll('button, input, select, [tabindex="0"], .tv-focusable'))
         .filter(el => {
           if (el.disabled || el.tabIndex === -1) return false;
@@ -263,72 +273,52 @@ export default function PerfectPlayerUI() {
           const style = window.getComputedStyle(el);
           if (style.visibility === 'hidden' || style.opacity === '0' || style.display === 'none') return false;
           return true;
+        })
+        .sort((a, b) => {
+          const rectA = a.getBoundingClientRect();
+          const rectB = b.getBoundingClientRect();
+          // Group components into Rows (Top to Bottom), then Left to Right
+          if (Math.abs(rectA.top - rectB.top) < 15) {
+             return rectA.left - rectB.left;
+          }
+          return rectA.top - rectB.top;
         });
 
       if (focusables.length === 0) return;
 
       const current = document.activeElement;
-      if (!current || current === document.body || !focusables.includes(current)) {
-        focusables[0].focus({ preventScroll: true });
-        return;
+      let currentIndex = focusables.indexOf(current);
+
+      if (currentIndex === -1) {
+         focusables[0].focus({ preventScroll: true });
+         return;
       }
 
-      const currentRect = current.getBoundingClientRect();
-      const currCenter = { x: currentRect.left + currentRect.width / 2, y: currentRect.top + currentRect.height / 2 };
-
-      let bestMatch = null;
-      let minDistance = Infinity;
-
-      focusables.forEach(candidate => {
-        if (candidate === current) return;
-        const rect = candidate.getBoundingClientRect();
-        const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-
-        let isEligible = false;
-        switch (direction) {
-          case 'UP': isEligible = center.y < currCenter.y - 5; break;
-          case 'DOWN': isEligible = center.y > currCenter.y + 5; break;
-          case 'LEFT': isEligible = center.x < currCenter.x - 5; break;
-          case 'RIGHT': isEligible = center.x > currCenter.x + 5; break;
-        }
-
-        if (isEligible) {
-          const dx = Math.abs(center.x - currCenter.x);
-          const dy = Math.abs(center.y - currCenter.y);
-          
-          let distance;
-          if (direction === 'LEFT' || direction === 'RIGHT') {
-            distance = dx + dy * 15; 
-            const overlapTop = Math.max(currentRect.top, rect.top);
-            const overlapBottom = Math.min(currentRect.bottom, rect.bottom);
-            if (overlapTop < overlapBottom) distance -= 10000;
-          } else {
-            distance = dy + dx * 15; 
-            const overlapLeft = Math.max(currentRect.left, rect.left);
-            const overlapRight = Math.min(currentRect.right, rect.right);
-            if (overlapLeft < overlapRight) distance -= 10000;
-          }
-
-          if (distance < minDistance) {
-            minDistance = distance;
-            bestMatch = candidate;
-          }
-        }
-      });
-
-      if (bestMatch) {
-        bestMatch.focus({ preventScroll: true });
-        bestMatch.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      if (direction === 'NEXT') {
+         currentIndex = currentIndex >= focusables.length - 1 ? 0 : currentIndex + 1;
+      } else {
+         currentIndex = currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1;
       }
+
+      const targetElement = focusables[currentIndex];
+      targetElement.focus({ preventScroll: true });
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
     };
 
     const handleDpadEvents = (e) => {
       const isInput = e.target.tagName === 'INPUT';
+      
+      // Standard D-Pad block (prevents browser cursor shifting)
       const isUp = e.key === 'ArrowUp' || e.keyCode === 38;
       const isDown = e.key === 'ArrowDown' || e.keyCode === 40;
       const isLeft = e.key === 'ArrowLeft' || e.keyCode === 37;
       const isRight = e.key === 'ArrowRight' || e.keyCode === 39;
-      const isEnter = e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23;
+      
+      // Hardware Media Keys mapping
+      const isRewind = e.key === 'MediaRewind' || e.keyCode === 227 || e.code === 'MediaRewind' || e.key === 'MediaTrackPrevious';
+      const isFastForward = e.key === 'MediaFastForward' || e.keyCode === 228 || e.code === 'MediaFastForward' || e.key === 'MediaTrackNext';
+      const isPlayPause = ['MediaPlayPause', 'MediaPlay', 'MediaPause'].includes(e.code) || e.key === 'MediaPlayPause' || e.keyCode === 179 || e.keyCode === 126 || e.keyCode === 127;
+      
       const isBack = e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009 || e.keyCode === 27;
 
       if ((isUp || isDown || isLeft || isRight) && !isInput) {
@@ -337,16 +327,6 @@ export default function PerfectPlayerUI() {
       }
 
       if (e.type !== 'keydown') return; 
-
-      if (['MediaPlayPause', 'MediaPlay', 'MediaPause'].includes(e.code) || e.key === 'MediaPlayPause' || e.keyCode === 179) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (videoRef.current) {
-          if (videoRef.current.paused) videoRef.current.play().catch(()=>{});
-          else videoRef.current.pause();
-        }
-        return;
-      }
 
       if (isBack) {
         if (isInput) return;
@@ -362,49 +342,57 @@ export default function PerfectPlayerUI() {
         return;
       }
 
-      if (isUp || isDown || isLeft || isRight) {
-        if (isInput) return; 
+      const isWatchingVideo = activeChannelRef.current && !showPlayerSettingsRef.current;
+      const controlsVisible = showControlsRef.current;
 
-        const isWatchingVideo = activeChannelRef.current && !showPlayerSettingsRef.current;
-        const controlsVisible = showControlsRef.current;
-
-        if (isWatchingVideo && !controlsVisible) {
-          if (isLeft) handleButtonSkip(true, null);
-          else if (isRight) handleButtonSkip(false, null);
-          else if (isUp || isDown) {
-            setShowControls(true);
-            setTimeout(() => document.getElementById('play-pause-btn')?.focus(), 50);
-          }
-          return;
-        }
-
-        let direction = '';
-        if (isUp) direction = 'UP';
-        if (isDown) direction = 'DOWN';
-        if (isLeft) direction = 'LEFT';
-        if (isRight) direction = 'RIGHT';
-        navigateFocus(direction);
-        
-        if (isWatchingVideo && controlsVisible) {
-          if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-          controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
-        }
-      }
-
-      if (isEnter) {
-        if (isInput) return;
-        e.preventDefault(); 
+      // >|| Play/Pause Button Logic 
+      if (isPlayPause) {
+        e.preventDefault();
         e.stopPropagation();
         
+        // Fullscreen Hidden Controls state -> Toggle Play & Show UI
+        if (isWatchingVideo && !controlsVisible) {
+           if (videoRef.current) {
+             if (videoRef.current.paused) videoRef.current.play().catch(()=>{});
+             else videoRef.current.pause();
+           }
+           setShowControls(true);
+           setTimeout(() => document.getElementById('play-pause-btn')?.focus(), 50);
+           return;
+        }
+        
+        // OK/Select alternative state
         const currentFocus = document.activeElement;
         if (!currentFocus || currentFocus === document.body) {
-           if (activeChannelRef.current && videoRef.current) {
+           if (isWatchingVideo && videoRef.current) {
              if (videoRef.current.paused) videoRef.current.play().catch(()=>{});
              else videoRef.current.pause();
              setShowControls(true);
            }
         } else if (typeof currentFocus.click === 'function') {
            currentFocus.click();
+        }
+        return;
+      }
+
+      // << Rewind & >> Forward Button Logic
+      if (isRewind || isFastForward) {
+        if (isInput) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // 3-Button Fullscreen Skip Logic
+        if (isWatchingVideo && !controlsVisible) {
+          handleButtonSkip(isRewind, null); // true = Left/Rewind, false = Right/Forward
+          return;
+        }
+
+        // Navigate Focus Sequentially
+        navigateLinearFocus(isRewind ? 'PREV' : 'NEXT');
+        
+        if (isWatchingVideo && controlsVisible) {
+          if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+          controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
         }
       }
     };
@@ -420,31 +408,35 @@ export default function PerfectPlayerUI() {
     };
   }, []);
 
-  // Smart Fullscreen & Orientation Listeners (Now auto triggers full screen logic)
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
+  // Aggressive Landscape Auto-Fullscreen
   useEffect(() => {
     const handleOrientationChange = () => {
       if (!activeChannelRef.current || !containerRef.current) return;
       setTimeout(() => {
         const isLandscape = window.innerWidth > window.innerHeight;
         if (isLandscape && !document.fullscreenElement) {
-           try { containerRef.current.requestFullscreen().catch(()=>{}); } catch(e) {}
+           if (containerRef.current.requestFullscreen) {
+              containerRef.current.requestFullscreen().catch(()=>{});
+           }
         } else if (!isLandscape && document.fullscreenElement) {
-           try { document.exitFullscreen().catch(()=>{}); } catch(e) {}
+           if (document.exitFullscreen) {
+              document.exitFullscreen().catch(()=>{});
+           }
         }
-      }, 300);
+      }, 400); // 400ms delay to let the browser geometry settle
     };
     window.addEventListener('orientationchange', handleOrientationChange);
     window.addEventListener('resize', handleOrientationChange);
     return () => {
       window.removeEventListener('orientationchange', handleOrientationChange);
       window.removeEventListener('resize', handleOrientationChange);
-    };
+    }
   }, []);
 
   useEffect(() => {
@@ -804,6 +796,7 @@ export default function PerfectPlayerUI() {
     else videoRef.current.pause();
   };
 
+  // 10S MEDIA SKIP Logic
   const handleButtonSkip = (isLeft, e) => {
     if (e) e.stopPropagation();
     setShowControls(true);
@@ -877,14 +870,18 @@ export default function PerfectPlayerUI() {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
       try {
-        await containerRef.current.requestFullscreen();
+        if (containerRef.current.requestFullscreen) {
+            await containerRef.current.requestFullscreen();
+        }
         if (screen.orientation && screen.orientation.lock) {
           await screen.orientation.lock('landscape');
         }
       } catch (err) {}
     } else {
       try {
-        await document.exitFullscreen();
+        if (document.exitFullscreen) {
+            await document.exitFullscreen();
+        }
         if (screen.orientation && screen.orientation.unlock) {
           screen.orientation.unlock();
         }
@@ -896,11 +893,8 @@ export default function PerfectPlayerUI() {
     if (e) e.stopPropagation();
     if (!videoRef.current) return;
     try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else if (videoRef.current.requestPictureInPicture) {
-        await videoRef.current.requestPictureInPicture();
-      }
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await videoRef.current.requestPictureInPicture();
     } catch (err) {}
   };
 
@@ -920,7 +914,7 @@ export default function PerfectPlayerUI() {
     setTimeout(() => document.getElementById('settings-btn')?.focus(), 50);
   };
 
-  // FIXED: Flawless Audio Matching (Prevents Video Quality Drop)
+  // AUDIO MATCHING - PRESERVED STRICTLY
   const handleAudioManualChange = (e) => {
     const targetBw = Number(e.target.value);
     setSelectedAudio(targetBw);
@@ -1028,8 +1022,8 @@ export default function PerfectPlayerUI() {
     <div className="flex h-[100dvh] w-full bg-[#070b13] text-white font-sans overflow-hidden selection:bg-[#0084ff]/30">
       
       <style dangerouslySetInnerHTML={{ __html: `
-        /* :focus-visible strictly disables borders for mobile touch, only applies for TV D-Pad/Keyboard */
-        button:focus-visible, input:focus-visible, select:focus-visible, .tv-focusable:focus-visible {
+        /* Ensures absolute prominent border focus logic across Smart TVs and PC */
+        button:focus-visible, input:focus-visible, select:focus-visible, .tv-focusable:focus-visible, .tv-focusable:focus {
           outline: 3px solid #0084ff !important;
           outline-offset: 3px !important;
           box-shadow: 0 0 25px rgba(0, 132, 255, 0.9) !important;
@@ -1038,11 +1032,7 @@ export default function PerfectPlayerUI() {
           z-index: 50;
         }
         
-        /* Clear all tap highlights on mobile */
-        button:focus, input:focus, select:focus {
-          outline: none !important;
-        }
-        
+        button:focus, input:focus, select:focus { outline: none !important; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
@@ -1092,7 +1082,8 @@ export default function PerfectPlayerUI() {
           <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar scroll-smooth overscroll-none">
             {categories.map((cat) => (
               <button key={cat} tabIndex={0} onClick={() => setActiveCategory(cat)}
-                className={`whitespace-nowrap flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[13px] font-bold tracking-wider transition-colors duration-200 outline-none tv-focusable ${
+                data-active={activeCategory === cat}
+                className={`category-btn whitespace-nowrap flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[13px] font-bold tracking-wider transition-colors duration-200 outline-none tv-focusable ${
                   activeCategory === cat ? 'bg-[#0084ff] text-white shadow-md' 
                   : cat === 'Favorites' ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
                   : cat === 'Premium' ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
@@ -1120,11 +1111,10 @@ export default function PerfectPlayerUI() {
                     <PlayCircle size={14} className="text-[#0084ff]" /> Continue Watching
                   </h2>
                   <div className="w-[120px]">
-                    <ChannelCard channel={lastPlayed} isActive={false} onClick={handleChannelSelect} />
+                    <ChannelCard channel={lastPlayed} isActive={false} onClick={handleChannelSelect} extraClass="continue-watching-card" />
                   </div>
                 </div>
               )}
-              {/* Massive bottom padding pb-[150px] ensures final items can scroll to the absolute center of a TV */}
               <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3 pb-[150px]">
                 {filteredChannels.length > 0 ? (
                   filteredChannels.map((channel, idx) => (
@@ -1342,21 +1332,23 @@ export default function PerfectPlayerUI() {
                     )}
 
                     <div className="flex items-center gap-4">
-                      {/* Fixed PiP SVG strictly defined with white stroke and fills to ensure it is flawlessly visible */}
-                      <button tabIndex={0} onClick={togglePictureInPicture} className="p-1.5 hover:text-[#0084ff] transition rounded-lg outline-none tv-focusable pointer-events-auto">
-                        <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="2" y="4" width="20" height="16" rx="2" />
-                          <rect x="12" y="12" width="8" height="6" rx="1" fill="white" stroke="none" />
+                      {/* PICTURE IN PICTURE SVG PLACED PERFECTLY BEFORE SETTINGS */}
+                      <button id="pip-btn" tabIndex={0} onClick={togglePictureInPicture} className="p-1.5 text-white hover:text-[#0084ff] transition rounded-lg outline-none tv-focusable pointer-events-auto">
+                        <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" />
+                          <rect x="13" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none" />
                         </svg>
                       </button>
 
+                      {/* SETTINGS SVG */}
                       <button tabIndex={0} id="settings-btn" onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none tv-focusable">
                         <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
-                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49 1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
                       </button>
 
-                      <button tabIndex={0} onClick={toggleFullscreen} className="p-1.5 hover:text-[#0084ff] transition drop-shadow-md rounded-lg outline-none tv-focusable pointer-events-auto">
+                      {/* FULLSCREEN SVG */}
+                      <button tabIndex={0} onClick={toggleFullscreen} className="p-1.5 hover:text-[#0084ff] transition drop-shadow-md rounded-lg outline-none tv-focusable">
                         {isFullscreen ? (
                           <svg className="w-6 h-6 text-white" viewBox="0 0 24 24"><path fill="currentColor" d="M18 7h-2V5h-2v4h4V7zM6 7v2h4V5H8v2H6zm12 10v-2h-4v4h2v-2h2zM6 17h2v2h2v-4H6v2z"/></svg>
                         ) : (
@@ -1371,9 +1363,8 @@ export default function PerfectPlayerUI() {
             </div>
           </div>
 
-          {/* Hidden on mobile landscape via CSS (landscape:hidden md:landscape:flex) to allow video to act as true auto-fullscreen */}
           {activeChannel && (
-            <div className="w-full landscape:hidden md:landscape:flex md:w-[320px] lg:w-[350px] flex-none bg-[#0a182b] border-t md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
+            <div className="w-full landscape:w-[280px] md:w-[320px] lg:w-[350px] flex-1 landscape:flex-none md:flex-none bg-[#0a182b] border-t landscape:border-t-0 landscape:border-l md:border-t-0 md:border-l border-blue-400/10 p-3 md:p-4 shadow-inner flex flex-col overflow-hidden">
               <div className="flex items-center justify-between mb-3 flex-shrink-0">
                 <h3 className="text-blue-200/60 text-[11px] md:text-sm font-bold uppercase tracking-widest flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
