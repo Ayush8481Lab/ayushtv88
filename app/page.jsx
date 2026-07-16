@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
 
 // ==========================================
 // INDEXED-DB LOGO CACHE MANAGER
@@ -153,8 +153,7 @@ export default function PerfectPlayerUI() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isZoomed, setIsZoomed] = useState(false);
-
+  
   // Custom Player States
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
@@ -162,18 +161,25 @@ export default function PerfectPlayerUI() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
+  
+  // Media Quality States
   const [quality, setQuality] = useState('Auto');
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
+  
+  const [audioTracks, setAudioTracks] = useState([]);
+  const [selectedAudio, setSelectedAudio] = useState(null);
   
   // LIVE Stream States
   const [isLiveStream, setIsLiveStream] = useState(false);
   const [liveLatencyText, setLiveLatencyText] = useState('LIVE');
   const [seekRange, setSeekRange] = useState({ start: 0, end: 100 });
   
-  // Skip Animations
+  // Skip Animations & Pinch Zoom
   const [skipAccumulator, setSkipAccumulator] = useState(0);
   const [skipSide, setSkipSide] = useState(null);
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [zoomMessage, setZoomMessage] = useState('');
 
   // Refs
   const videoRef = useRef(null);
@@ -181,10 +187,15 @@ export default function PerfectPlayerUI() {
   const playerRef = useRef(null);
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
+  
   const isManualAudioSwitch = useRef(false);
+  const isUserManualAudio = useRef(false); // Permanently disable auto-audio if user manually changes
+  
   const controlsTimeoutRef = useRef(null);
   const skipTimeoutRef = useRef(null);
   const currentSkipSide = useRef(null);
+  const pinchRef = useRef({ initialDist: 0, isPinching: false });
+  const zoomToastTimer = useRef(null);
 
   // 1. Mount & Setup
   useEffect(() => {
@@ -206,10 +217,7 @@ export default function PerfectPlayerUI() {
 
       setFavorites(JSON.parse(localStorage.getItem('fav_channels_8481') || '[]'));
       setLastPlayed(JSON.parse(localStorage.getItem('last_played_8481') || 'null'));
-      const storedZoom = localStorage.getItem('auto_fit_8481');
-      if (storedZoom !== null) setIsZoomed(storedZoom === 'true');
 
-      // Android Back Button Logic
       const handlePopState = () => { 
         if (activeChannelRef.current) setActiveChannel(null); 
       };
@@ -229,11 +237,27 @@ export default function PerfectPlayerUI() {
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
-  // Fullscreen Listener
+  // Smart Fullscreen & Orientation Listeners
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const handleOrientationChange = () => {
+      if (!activeChannelRef.current || !containerRef.current) return;
+      setTimeout(() => {
+        const isLandscape = window.innerWidth > window.innerHeight;
+        if (isLandscape && !document.fullscreenElement) {
+           containerRef.current.requestFullscreen().catch(()=>{});
+        } else if (!isLandscape && document.fullscreenElement) {
+           document.exitFullscreen().catch(()=>{});
+        }
+      }, 300);
+    };
+    window.addEventListener('orientationchange', handleOrientationChange);
+    return () => window.removeEventListener('orientationchange', handleOrientationChange);
   }, []);
 
   // Auto PiP on background
@@ -381,18 +405,29 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
-      // Populate Qualities for Custom Settings Menu
+      // Populate Qualities & Audio Tracks for Custom Settings Menus
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
-        const unique = new Map();
-        tracks.forEach(t => { if (t.height && !unique.has(t.height)) unique.set(t.height, t); });
-        const sorted = Array.from(unique.values()).sort((a, b) => b.height - a.height);
-        setAvailableQualities([{ index: -1, name: 'Auto' }, ...sorted.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
+        
+        // Setup Video Qualities
+        const uniqueVideo = new Map();
+        tracks.forEach(t => { if (t.height && !uniqueVideo.has(t.height)) uniqueVideo.set(t.height, t); });
+        const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
+        setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
+
+        // Setup Audio Qualities
+        const uniqueAudio = new Map();
+        tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
+        const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
+        setAudioTracks(sortedAudio);
+        
+        const active = tracks.find(t => t.active);
+        if (active && !isUserManualAudio.current) setSelectedAudio(active.audioBandwidth);
       });
 
       // 100% GUARANTEED HIGHEST AUDIO QUALITY HIJACKER
       player.addEventListener('adaptation', () => {
-        if (isManualAudioSwitch.current || !playerRef.current) return;
+        if (isManualAudioSwitch.current || !playerRef.current || isUserManualAudio.current) return;
         const tracks = playerRef.current.getVariantTracks();
         const active = tracks.find(t => t.active);
         if (!active || !active.height) return;
@@ -408,8 +443,12 @@ export default function PerfectPlayerUI() {
         if (targetTrack && targetTrack.id !== active.id) {
             isManualAudioSwitch.current = true;
             playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = instant switch
+            setSelectedAudio(targetTrack.audioBandwidth);
+            
             setTimeout(() => {
-                if (playerRef.current) playerRef.current.configure({ abr: { enabled: true } });
+                if (playerRef.current && !isUserManualAudio.current) {
+                  playerRef.current.configure({ abr: { enabled: true } });
+                }
                 isManualAudioSwitch.current = false;
             }, 6000); // 6s cooldown prevents ABR looping
         }
@@ -451,6 +490,7 @@ export default function PerfectPlayerUI() {
       setPlayerError(null);
       setIsPlaying(false);
       setIsLiveStream(false);
+      isUserManualAudio.current = false; // Reset manual audio on channel change
       return;
     }
     const loadStream = async () => {
@@ -478,6 +518,11 @@ export default function PerfectPlayerUI() {
 
         if (forceMimeType) await playerRef.current.load(finalUrl, null, forceMimeType);
         else await playerRef.current.load(finalUrl);
+
+        // Force Autoplay after loading
+        if (videoRef.current) {
+          videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+        }
 
         if ('mediaSession' in navigator) {
           navigator.mediaSession.metadata = new window.MediaMetadata({
@@ -582,17 +627,65 @@ export default function PerfectPlayerUI() {
     }, 800);
   };
 
+  // YouTube Style Pinch to Zoom Handlers
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 2 && (document.fullscreenElement || window.innerWidth > window.innerHeight)) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      pinchRef.current = { initialDist: dist, isPinching: true };
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 2 && pinchRef.current.isPinching) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      const delta = dist - pinchRef.current.initialDist;
+      
+      if (delta > 40 && !isZoomed) {
+        setIsZoomed(true);
+        showZoomToast("Zoomed to fill");
+        pinchRef.current.isPinching = false;
+      } else if (delta < -40 && isZoomed) {
+        setIsZoomed(false);
+        showZoomToast("Original");
+        pinchRef.current.isPinching = false;
+      }
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    if (e.touches.length < 2) pinchRef.current.isPinching = false;
+  };
+
+  const showZoomToast = (msg) => {
+    setZoomMessage(msg);
+    clearTimeout(zoomToastTimer.current);
+    zoomToastTimer.current = setTimeout(() => setZoomMessage(''), 2000);
+  };
+
   const handleInteraction = () => {
     setShowPlayerSettings(false);
     setShowControls(prev => !prev);
     if (isPlaying && !showControls) resetControlsTimer();
   };
 
-  const toggleFullscreen = (e) => {
-    e.stopPropagation();
+  const toggleFullscreen = async (e) => {
+    e?.stopPropagation();
     if (!containerRef.current) return;
-    if (!document.fullscreenElement) containerRef.current.requestFullscreen().catch(() => {});
-    else document.exitFullscreen();
+    if (!document.fullscreenElement) {
+      try {
+        await containerRef.current.requestFullscreen();
+        if (screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock('landscape');
+        }
+      } catch (err) {}
+    } else {
+      try {
+        await document.exitFullscreen();
+        if (screen.orientation && screen.orientation.unlock) {
+          screen.orientation.unlock();
+        }
+      } catch (err) {}
+    }
   };
 
   const togglePictureInPicture = async (e) => {
@@ -617,6 +710,17 @@ export default function PerfectPlayerUI() {
     setShowPlayerSettings(false);
   };
 
+  const handleAudioManualChange = (e) => {
+    const targetBw = Number(e.target.value);
+    setSelectedAudio(targetBw);
+    isUserManualAudio.current = true; // Permanently disable audio hijacker
+    if (playerRef.current) {
+      const tracks = playerRef.current.getVariantTracks();
+      const targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
+      if (targetTrack) playerRef.current.selectVariantTrack(targetTrack, false);
+    }
+  };
+
   const handleChannelSelect = useCallback((channel) => {
     if (!activeChannelRef.current && typeof window !== 'undefined') window.history.pushState({ playerOpen: true }, '');
     else if (typeof window !== 'undefined') window.history.replaceState({ playerOpen: true }, '');
@@ -631,12 +735,6 @@ export default function PerfectPlayerUI() {
     if (window.history.state && window.history.state.playerOpen) {
       window.history.back(); // Clean browser history seamlessly
     }
-  };
-
-  const toggleAutoFit = () => {
-    const nextState = !isZoomed;
-    setIsZoomed(nextState);
-    localStorage.setItem('auto_fit_8481', String(nextState));
   };
 
   const toggleFavorite = () => {
@@ -828,8 +926,21 @@ export default function PerfectPlayerUI() {
                 autoPictureInPicture={true}
               />
 
-              {/* INTERACTION SHIELD */}
-              <div onClick={handleInteraction} className="absolute inset-0 z-10 cursor-pointer" />
+              {/* INTERACTION SHIELD & PINCH LISTENER */}
+              <div 
+                onClick={handleInteraction} 
+                onTouchStart={handleTouchStart} 
+                onTouchMove={handleTouchMove} 
+                onTouchEnd={handleTouchEnd}
+                className="absolute inset-0 z-10 cursor-pointer touch-none" 
+              />
+
+              {/* YOUTUBE STYLE ZOOM TOAST */}
+              {zoomMessage && (
+                <div className="absolute top-[80px] left-1/2 -translate-x-1/2 bg-black/80 text-white px-5 py-2 rounded-full text-sm font-bold tracking-wide z-50 pointer-events-none transition-opacity duration-300 shadow-xl backdrop-blur-sm">
+                  {zoomMessage}
+                </div>
+              )}
 
               {/* SKIP ANIMATIONS */}
               <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-20 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
@@ -946,16 +1057,17 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
 
-                {/* Quality Settings Menu */}
+                {/* YOUTUBE STYLE WHITE SETTINGS MODAL */}
                 {showPlayerSettings && (
-                  <div className="absolute right-6 bottom-24 bg-[#0f0f0f]/95 backdrop-blur-md border border-gray-800 rounded-xl py-2 shadow-2xl z-50 w-64 text-left pointer-events-auto no-scrollbar max-h-[300px] overflow-y-auto keep-menus-open">
-                    <div className="flex flex-col">
-                      <div className="px-5 py-3 border-b border-gray-700/50 text-white text-sm font-bold flex items-center gap-4">
-                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> Quality
-                      </div>
+                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl py-3 shadow-[0_0_40px_rgba(0,0,0,0.5)] z-50 w-64 text-left pointer-events-auto keep-menus-open font-sans">
+                    <div className="px-5 py-2 border-b border-gray-100 text-black text-sm font-extrabold mb-1">
+                      Quality
+                    </div>
+                    <div className="max-h-60 overflow-y-auto no-scrollbar">
                       {availableQualities.map((item) => (
-                        <button key={item.index} onClick={() => selectQuality(item)} className={`w-full text-left px-5 py-3 text-sm transition flex items-center justify-between ${quality === item.name ? 'text-[#0084ff] bg-white/10 font-bold' : 'text-gray-300 hover:bg-white/5'}`}>
-                          <span>{item.name}</span>{quality === item.name && <svg className="w-4 h-4 fill-current text-[#0084ff]" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
+                        <button key={item.index} onClick={() => selectQuality(item)} className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-800 hover:bg-gray-100">
+                          <span className={quality === item.name ? 'font-black text-black' : 'font-medium'}>{item.name}</span>
+                          {quality === item.name && <svg className="w-4 h-4 fill-current text-black" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
                         </button>
                       ))}
                     </div>
@@ -973,16 +1085,20 @@ export default function PerfectPlayerUI() {
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
                 
-                <button 
-                  onClick={toggleAutoFit}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] md:text-xs font-bold transition-colors border shadow-sm ${
-                    isZoomed ? 'bg-[#0084ff]/20 text-[#0084ff] border-[#0084ff]/50 hover:bg-[#0084ff]/30' : 'bg-blue-900/40 text-blue-300 border-blue-400/20 hover:bg-blue-900/60'
-                  }`}
-                  title="Toggle Full Screen Auto-Fit"
-                >
-                  {isZoomed ? <Minimize size={12} /> : <Maximize size={12} />}
-                  AUTO FIT: {isZoomed ? 'ON' : 'OFF'}
-                </button>
+                {/* MANUAL AUDIO QUALITY SELECTOR */}
+                {audioTracks.length > 1 && (
+                  <select
+                    className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors"
+                    value={selectedAudio || ''}
+                    onChange={handleAudioManualChange}
+                  >
+                    {audioTracks.map(t => (
+                      <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
+                        Audio: {Math.round(t.audioBandwidth / 1000)} kbps
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               
               <div className="flex flex-row landscape:hidden md:hidden overflow-x-auto gap-3 pb-2 scroll-smooth overscroll-none no-scrollbar">
