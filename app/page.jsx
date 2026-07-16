@@ -146,7 +146,7 @@ export default function PerfectPlayerUI() {
   const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [favorites, setFavorites] = useState([]);
-  const [lastPlayed, setLastPlayed] = useState(null);
+  const [lastPlayedHistory, setLastPlayedHistory] = useState([]);
 
   // UI States
   const [activeChannel, setActiveChannel] = useState(null);
@@ -190,7 +190,6 @@ export default function PerfectPlayerUI() {
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
   
-  const isManualAudioSwitch = useRef(false);
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
   
@@ -219,7 +218,13 @@ export default function PerfectPlayerUI() {
       }
 
       setFavorites(JSON.parse(localStorage.getItem('fav_channels_8481') || '[]'));
-      setLastPlayed(JSON.parse(localStorage.getItem('last_played_8481') || 'null'));
+      
+      // Parse History (Handles conversion from old single object format to new 4-item array)
+      let savedHistory = JSON.parse(localStorage.getItem('last_played_8481') || '[]');
+      if (!Array.isArray(savedHistory)) {
+        savedHistory = savedHistory && savedHistory.id ? [{ id: savedHistory.id, name: savedHistory.name }] : [];
+      }
+      setLastPlayedHistory(savedHistory);
 
       const handlePopState = () => { 
         if (activeChannelRef.current) setActiveChannel(null); 
@@ -500,37 +505,28 @@ export default function PerfectPlayerUI() {
         const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
         setAudioTracks(sortedAudio);
         
-        const active = tracks.find(t => t.active);
-        if (active && !isUserManualAudio.current) {
-          setSelectedAudio(active.audioBandwidth);
-        }
-      });
-
-      player.addEventListener('adaptation', () => {
-        if (isManualAudioSwitch.current || !playerRef.current || isUserManualAudio.current) return;
-        const tracks = playerRef.current.getVariantTracks();
-        const active = tracks.find(t => t.active);
-        if (!active || !active.height) return;
-
-        setActiveResolution(`${active.height}p`);
-
-        const peers = tracks.filter(t => t.height === active.height);
-        if (peers.length <= 1) return;
-
-        peers.sort((a,b) => (a.audioBandwidth || 0) - (b.audioBandwidth || 0));
-        let targetTrack = peers[peers.length - 1]; 
-
-        if (targetTrack && targetTrack.id !== active.id) {
-            isManualAudioSwitch.current = true;
-            playerRef.current.selectVariantTrack(targetTrack, false);
-            setSelectedAudio(targetTrack.audioBandwidth);
+        // Auto-Lock Highest Audio Logic
+        if (sortedAudio.length > 0 && !isUserManualAudio.current) {
+          const highestAudioTrack = sortedAudio[0];
+          setSelectedAudio(highestAudioTrack.audioBandwidth);
+          
+          if (sortedAudio.length > 1) {
+            isUserManualAudio.current = true;
+            player.configure({ abr: { enabled: false } }); // Lock ABR
             
-            setTimeout(() => {
-                if (playerRef.current && !isUserManualAudio.current && !isUserManualVideo.current) {
-                  playerRef.current.configure({ abr: { enabled: true } });
-                }
-                isManualAudioSwitch.current = false;
-            }, 6000);
+            const activeTrack = tracks.find(t => t.active);
+            const targetHeight = activeTrack ? activeTrack.height : (sortedVideo.length > 0 ? sortedVideo[0].height : null);
+            
+            // Try to match highest audio with active video height first
+            let targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth && t.height === targetHeight);
+            if (!targetVariant) {
+               targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth);
+            }
+            
+            if (targetVariant) {
+              player.selectVariantTrack(targetVariant, true, true);
+            }
+          }
         }
       });
 
@@ -587,7 +583,7 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
         
-        // Prioritize highest audio bandwidth initially by setting a huge default estimate
+        // Prioritize highest bandwidth globally upfront
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
@@ -836,10 +832,17 @@ export default function PerfectPlayerUI() {
   const handleChannelSelect = useCallback((channel) => {
     if (!activeChannelRef.current && typeof window !== 'undefined') window.history.pushState({ playerOpen: true }, '');
     else if (typeof window !== 'undefined') window.history.replaceState({ playerOpen: true }, '');
+    
     setActiveChannel(channel);
     setSearchQuery('');
-    setLastPlayed(channel);
-    localStorage.setItem('last_played_8481', JSON.stringify(channel));
+    
+    // Manage History: Keep up to 4 items, store only {id, name}
+    setLastPlayedHistory(prev => {
+      const filtered = prev.filter(c => c.name !== channel.name && c.id !== channel.id);
+      const updated = [{ id: channel.id, name: channel.name }, ...filtered].slice(0, 4);
+      localStorage.setItem('last_played_8481', JSON.stringify(updated));
+      return updated;
+    });
   }, []);
 
   const handleUiBack = () => {
@@ -878,6 +881,13 @@ export default function PerfectPlayerUI() {
       return cCat === activeCat && c.name !== activeChannel.name;
     });
   }, [channels, activeChannel]);
+
+  // Construct history objects dynamically from fresh fetched data
+  const historyChannelsToRender = useMemo(() => {
+    return lastPlayedHistory
+      .map(hist => channels.find(c => (c.id && c.id === hist.id) || (c.name && c.name === hist.name)))
+      .filter(Boolean);
+  }, [lastPlayedHistory, channels]);
 
   if (!isMounted) return <div className="h-screen w-screen bg-[#020813]" />;
 
@@ -979,13 +989,15 @@ export default function PerfectPlayerUI() {
             </div>
           ) : (
             <>
-              {activeCategory === 'All' && !searchQuery && lastPlayed && (
+              {activeCategory === 'All' && !searchQuery && historyChannelsToRender.length > 0 && (
                 <div className="mb-6 bg-[#0a182b]/50 p-3 rounded-2xl border border-blue-400/5">
                   <h2 className="text-blue-200/80 text-[11px] font-bold mb-3 uppercase tracking-widest flex items-center gap-2">
                     <PlayCircle size={14} className="text-[#0084ff]" /> Continue Watching
                   </h2>
-                  <div className="w-[120px]">
-                    <ChannelCard channel={lastPlayed} isActive={false} onClick={handleChannelSelect} />
+                  <div className="grid grid-cols-4 gap-2">
+                    {historyChannelsToRender.map((c, idx) => (
+                      <ChannelCard key={`hist-${idx}`} channel={c} isActive={false} onClick={handleChannelSelect} />
+                    ))}
                   </div>
                 </div>
               )}
@@ -1074,12 +1086,12 @@ export default function PerfectPlayerUI() {
               </div>
 
               {/* PERFECTLY CENTERED BUFFERING SPINNER - Z-40 */}
-              <div className={`absolute top-0 left-0 w-full h-[calc(100%-15px)] flex justify-center items-center z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`absolute top-0 left-0 w-full h-[calc(100%-22px)] flex justify-center items-center z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
               {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - Adjusted to sit gracefully above timeline */}
-              <div className={`absolute top-0 left-0 w-full h-[calc(100%-15px)] flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`absolute top-0 left-0 w-full h-[calc(100%-22px)] flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                 <button onClick={(e) => handleButtonSkip(true, e)} className={`outline-none transition-transform hover:scale-105 active:scale-90 flex items-center rounded-full focus-visible:ring-4 focus-visible:ring-white/50 drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                 </button>
@@ -1144,8 +1156,8 @@ export default function PerfectPlayerUI() {
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
-                {/* Top Bar */}
-                <div className={`flex items-center justify-between ${pointerEventsClass} w-full`}>
+                {/* Top Bar - Adjusted to pull away from the very edges */}
+                <div className={`flex items-center justify-between ${pointerEventsClass} w-full pt-4 pl-4`}>
                   <div className="flex items-center gap-3">
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white">
                       <ArrowLeft size={24} className="text-white" />
