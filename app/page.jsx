@@ -1086,12 +1086,12 @@ export default function PerfectPlayerUI() {
               </div>
 
               {/* PERFECTLY CENTERED BUFFERING SPINNER - Z-40 */}
-              <div className={`absolute top-0 left-0 w-full h-[calc(100%-22px)] flex justify-center items-center z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`absolute top-0 left-0 w-full h-[calc(100%-20px)] flex justify-center items-center z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
               {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - Adjusted to sit gracefully above timeline */}
-              <div className={`absolute top-0 left-0 w-full h-[calc(100%-22px)] flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`absolute top-0 left-0 w-full h-[calc(100%-20px)] flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                 <button onClick={(e) => handleButtonSkip(true, e)} className={`outline-none transition-transform hover:scale-105 active:scale-90 flex items-center rounded-full focus-visible:ring-4 focus-visible:ring-white/50 drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                 </button>
@@ -1160,7 +1160,7 @@ export default function PerfectPlayerUI() {
                 <div className={`flex items-center justify-between ${pointerEventsClass} w-full pt-4 pl-4`}>
                   <div className="flex items-center gap-3">
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white">
-                      <ArrowLeft size={24} className="text-white" />
+                      <ArrowLeft size={38} className="text-white" />
                     </button>
                     <div className="text-white text-lg md:text-xl font-bold truncate max-w-[200px] md:max-w-md">{activeChannel?.name}</div>
                     <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-pink-500">
@@ -1270,11 +1270,11 @@ export default function PerfectPlayerUI() {
                 ))}
               </div>
 
-              <div className="hidden landscape:grid md:grid grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none no-scrollbar content-start">
-                {similarChannels.map((c, idx) => (
-                  <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
-                ))}
-              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none no-scrollbar content-start flex-1">
+  {similarChannels.map((c, idx) => (
+    <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
+  ))}
+</div>
             </div>
           )}
 
