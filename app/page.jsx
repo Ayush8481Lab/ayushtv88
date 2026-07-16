@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Maximize, Minimize } from 'lucide-react';
 
 // ==========================================
 // INDEXED-DB LOGO CACHE MANAGER
@@ -164,6 +164,7 @@ export default function PerfectPlayerUI() {
   
   // Media Quality States
   const [quality, setQuality] = useState('Auto');
+  const [activeResolution, setActiveResolution] = useState(''); // Stores actively playing resolution for "Auto (1080p)" display
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
   
@@ -190,6 +191,7 @@ export default function PerfectPlayerUI() {
   
   const isManualAudioSwitch = useRef(false);
   const isUserManualAudio = useRef(false); // Permanently disable auto-audio if user manually changes
+  const isUserManualVideo = useRef(false); // Protects manual video quality from audio hijacker overriding ABR
   
   const controlsTimeoutRef = useRef(null);
   const skipTimeoutRef = useRef(null);
@@ -405,6 +407,15 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
+      // Track active variant for "Auto (1080p)" YouTube UI Feature
+      player.addEventListener('variantchanged', () => {
+        const tracks = player.getVariantTracks();
+        const active = tracks.find(t => t.active);
+        if (active && active.height) {
+          setActiveResolution(`${active.height}p`);
+        }
+      });
+
       // Populate Qualities & Audio Tracks for Custom Settings Menus
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
@@ -432,6 +443,9 @@ export default function PerfectPlayerUI() {
         const active = tracks.find(t => t.active);
         if (!active || !active.height) return;
 
+        // Extract current auto-resolution for UI display
+        setActiveResolution(`${active.height}p`);
+
         // Isolate tracks sharing the same video resolution
         const peers = tracks.filter(t => t.height === active.height);
         if (peers.length <= 1) return;
@@ -442,11 +456,12 @@ export default function PerfectPlayerUI() {
 
         if (targetTrack && targetTrack.id !== active.id) {
             isManualAudioSwitch.current = true;
-            playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = instant switch
+            playerRef.current.selectVariantTrack(targetTrack, false); // false = clearBuffer disabled = instant switch without freeze
             setSelectedAudio(targetTrack.audioBandwidth);
             
             setTimeout(() => {
-                if (playerRef.current && !isUserManualAudio.current) {
+                // Ensure we don't accidentally turn ABR back on if the user MANUALLY locked the video quality!
+                if (playerRef.current && !isUserManualAudio.current && !isUserManualVideo.current) {
                   playerRef.current.configure({ abr: { enabled: true } });
                 }
                 isManualAudioSwitch.current = false;
@@ -490,13 +505,17 @@ export default function PerfectPlayerUI() {
       setPlayerError(null);
       setIsPlaying(false);
       setIsLiveStream(false);
-      isUserManualAudio.current = false; // Reset manual audio on channel change
+      isUserManualAudio.current = false; 
+      isUserManualVideo.current = false;
       return;
     }
     const loadStream = async () => {
       try {
         setPlayerError(null);
         setIsBuffering(true);
+        isUserManualVideo.current = false; // Reset to ABR initially on load
+        setQuality('Auto');
+        
         let drmConfig = { clearKeys: {} };
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
@@ -519,7 +538,7 @@ export default function PerfectPlayerUI() {
         if (forceMimeType) await playerRef.current.load(finalUrl, null, forceMimeType);
         else await playerRef.current.load(finalUrl);
 
-        // Force Autoplay after loading
+        // Force Autoplay after loading successfully
         if (videoRef.current) {
           videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
         }
@@ -700,9 +719,11 @@ export default function PerfectPlayerUI() {
   const selectQuality = (item) => {
     if (!playerRef.current) return;
     if (item.index === -1) {
+      isUserManualVideo.current = false;
       playerRef.current.configure({ abr: { enabled: true } });
       setQuality('Auto');
     } else {
+      isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
       playerRef.current.selectVariantTrack(item.track, true, false);
       setQuality(item.name);
@@ -717,7 +738,8 @@ export default function PerfectPlayerUI() {
     if (playerRef.current) {
       const tracks = playerRef.current.getVariantTracks();
       const targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
-      if (targetTrack) playerRef.current.selectVariantTrack(targetTrack, false);
+      // Pass clearBuffer = true to force INSTANT switch
+      if (targetTrack) playerRef.current.selectVariantTrack(targetTrack, true, false);
     }
   };
 
@@ -975,7 +997,7 @@ export default function PerfectPlayerUI() {
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md">
                       <ArrowLeft size={24} className="text-white" />
                     </button>
-                    <div className="text-white text-sm md:text-base font-bold truncate max-w-[150px] md:max-w-xs">{activeChannel?.name}</div>
+                    <div className="text-white text-lg md:text-xl font-bold truncate max-w-[200px] md:max-w-md">{activeChannel?.name}</div>
                     <button onClick={toggleFavorite} className="text-pink-500 hover:text-pink-400 p-1 transition-transform active:scale-75">
                       <Heart size={20} className={activeChannel && favorites.includes(activeChannel.name) ? "fill-pink-500" : "fill-none"} />
                     </button>
@@ -1003,9 +1025,24 @@ export default function PerfectPlayerUI() {
                   </button>
                 </div>
 
-                {/* Bottom Bar */}
-                <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-[10px]`}>
-                  <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md mb-2">
+                {/* Bottom Bar: REORDERED TIMELINE ON TOP, ICONS ON BOTTOM */}
+                <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto`}>
+                  
+                  {/* Range Slider / Blue Glider (MOVED UP) */}
+                  <div className="relative flex items-center w-full mb-1">
+                    <input 
+                      type="range" 
+                      min={isLiveStream ? seekRange.start : 0} 
+                      max={isLiveStream ? seekRange.end : (duration || 100)} 
+                      value={currentTime} 
+                      onChange={handleSeekChange} 
+                      className="w-full h-1 rounded-lg appearance-none cursor-pointer outline-none transition-all drop-shadow-md" 
+                      style={{ background: rangeBackground }} 
+                    />
+                  </div>
+
+                  {/* Settings & Time Icons (MOVED DOWN) */}
+                  <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md">
                     
                     {/* Time / Live Latency Sync */}
                     {isLiveStream ? (
@@ -1043,18 +1080,6 @@ export default function PerfectPlayerUI() {
                     </div>
                   </div>
 
-                  {/* Range Slider / Blue Glider */}
-                  <div className="relative flex items-center w-full mt-1">
-                    <input 
-                      type="range" 
-                      min={isLiveStream ? seekRange.start : 0} 
-                      max={isLiveStream ? seekRange.end : (duration || 100)} 
-                      value={currentTime} 
-                      onChange={handleSeekChange} 
-                      className="w-full h-1 rounded-lg appearance-none cursor-pointer outline-none transition-all drop-shadow-md" 
-                      style={{ background: rangeBackground }} 
-                    />
-                  </div>
                 </div>
 
                 {/* YOUTUBE STYLE WHITE SETTINGS MODAL */}
@@ -1064,12 +1089,17 @@ export default function PerfectPlayerUI() {
                       Quality
                     </div>
                     <div className="max-h-60 overflow-y-auto no-scrollbar">
-                      {availableQualities.map((item) => (
-                        <button key={item.index} onClick={() => selectQuality(item)} className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-800 hover:bg-gray-100">
-                          <span className={quality === item.name ? 'font-black text-black' : 'font-medium'}>{item.name}</span>
-                          {quality === item.name && <svg className="w-4 h-4 fill-current text-black" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
-                        </button>
-                      ))}
+                      {availableQualities.map((item) => {
+                        const isAuto = item.index === -1;
+                        const displayName = isAuto && activeResolution ? `Auto (${activeResolution})` : item.name;
+                        
+                        return (
+                          <button key={item.index} onClick={() => selectQuality(item)} className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-800 hover:bg-gray-100">
+                            <span className={quality === item.name ? 'font-black text-black' : 'font-medium'}>{displayName}</span>
+                            {quality === item.name && <svg className="w-4 h-4 fill-current text-black" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
+                          </button>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
