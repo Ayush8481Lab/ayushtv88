@@ -228,17 +228,6 @@ export default function PerfectPlayerUI() {
     }
   }, []);
 
-  // Click Outside Menus
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (!e.target.closest('.keep-menus-open')) {
-        setShowPlayerSettings(false);
-      }
-    };
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
-
   // Smart Fullscreen & Orientation Listeners
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -396,7 +385,7 @@ export default function PerfectPlayerUI() {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
     const initPlayer = async () => {
-      const shaka = await import('shaka-player'); // ONLY CORE, NO UI
+      const shaka = await import('shaka-player'); 
       shaka.polyfill.installAll();
       if (!shaka.Player.isBrowserSupported()) return;
 
@@ -597,10 +586,6 @@ export default function PerfectPlayerUI() {
     return () => clearTimeout(controlsTimeoutRef.current);
   }, [isPlaying]);
 
-  useEffect(() => {
-    if (!showControls) setShowPlayerSettings(false);
-  }, [showControls]);
-
   const handleMouseMove = (e) => {
     if (e.movementX === 0 && e.movementY === 0) return;
     if (!showControls) setShowControls(true);
@@ -672,7 +657,6 @@ export default function PerfectPlayerUI() {
   };
 
   const handleInteraction = () => {
-    setShowPlayerSettings(false);
     setShowControls(prev => !prev);
     if (isPlaying && !showControls) resetControlsTimer();
   };
@@ -821,6 +805,12 @@ export default function PerfectPlayerUI() {
         .anim-arr-l { animation: fadeSlideLeft 0.6s ease-in-out infinite; }
         .dly-1 { animation-delay: 0.1s; }
         .dly-2 { animation-delay: 0.2s; }
+        
+        /* Premium Bottom Sheet / Modal Animations */
+        @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .yt-modal-mobile { animation: popUpModalMobile 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .yt-modal-desktop { animation: popUpModalDesktop 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       `}} />
 
       <aside className={`flex flex-col bg-[#061121] border-r border-blue-400/10 z-10 ${activeChannel ? 'hidden' : 'flex-1 w-full md:w-[400px] lg:w-[450px] md:flex-none'}`}>
@@ -947,7 +937,7 @@ export default function PerfectPlayerUI() {
                 </div>
               )}
 
-              {/* SKIP ANIMATIONS - BUMPED TO Z-40 */}
+              {/* SKIP ANIMATIONS - Z-40 */}
               <div className={`absolute left-0 top-0 bottom-0 w-[30%] bg-white/10 flex flex-col justify-center items-center pointer-events-none z-40 transition-opacity duration-200 ${skipSide === 'left' ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="flex text-white drop-shadow-lg">
                   <svg className="w-9 h-9 anim-arr-l" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
@@ -965,12 +955,12 @@ export default function PerfectPlayerUI() {
                 <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
               </div>
 
-              {/* PERFECTLY CENTERED BUFFERING SPINNER - BUMPED TO Z-40 */}
+              {/* PERFECTLY CENTERED BUFFERING SPINNER - Z-40 */}
               <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
-              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - BUMPED TO Z-40 and wrapper is pointer-events-none so it doesn't block middle screen clicks */}
+              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - Z-40 */}
               <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 w-full pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                 <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
@@ -991,7 +981,48 @@ export default function PerfectPlayerUI() {
                 </button>
               </div>
 
-              {/* CONTROLS OVERLAY (Top & Bottom Bars) - Stays Z-30 */}
+              {/* YOUTUBE-STYLE SETTINGS MODAL - Z-[60] - Renders in front of absolutely everything */}
+              {showPlayerSettings && (
+                <div 
+                  className="absolute inset-0 z-[60] flex items-end md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
+                  onClick={() => setShowPlayerSettings(false)}
+                >
+                  <div 
+                    onClick={(e) => e.stopPropagation()} 
+                    className="bg-[#212121] w-full md:w-[320px] max-h-[75vh] flex flex-col rounded-t-2xl md:rounded-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] border border-white/5 yt-modal-mobile md:yt-modal-desktop overflow-hidden"
+                  >
+                    <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between bg-[#282828] z-10 shadow-sm">
+                      <span className="text-white text-sm font-bold tracking-wide">Video Quality</span>
+                      <button onClick={() => setShowPlayerSettings(false)} className="text-gray-400 hover:text-white transition">
+                        <X size={20} />
+                      </button>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto no-scrollbar py-2">
+                      {availableQualities.map((item) => {
+                        const isAuto = item.index === -1;
+                        const displayName = isAuto && activeResolution ? `Auto (${activeResolution})` : item.name;
+                        const isActive = quality === item.name;
+                        
+                        return (
+                          <button 
+                            key={item.index} 
+                            onClick={() => selectQuality(item)} 
+                            className="w-full text-left px-5 py-4 text-sm transition flex items-center justify-between text-gray-200 hover:bg-white/10 active:bg-white/20"
+                          >
+                            <span className={isActive ? 'font-black text-white' : 'font-medium'}>{displayName}</span>
+                            {isActive && (
+                              <svg className="w-5 h-5 text-white fill-current" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CONTROLS OVERLAY (Top & Bottom Bars) - Z-30 */}
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
@@ -1053,13 +1084,13 @@ export default function PerfectPlayerUI() {
                       </div>
                     )}
 
-                    <div className="flex items-center gap-4 keep-menus-open">
+                    <div className="flex items-center gap-4">
                       <button onClick={togglePictureInPicture} className="p-1.5 text-white hover:text-[#0084ff] transition">
                         <svg className="w-6 h-6 drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" /><rect x="13" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none" /></svg>
                       </button>
 
-                      <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(!showPlayerSettings); }} className="p-1.5 hover:text-[#0084ff] transition">
-                        <svg className={`w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45 ${showPlayerSettings ? 'rotate-45' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                      <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto">
+                        <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
                            <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
                       </button>
@@ -1073,30 +1104,9 @@ export default function PerfectPlayerUI() {
                       </button>
                     </div>
                   </div>
-
                 </div>
-
-                {showPlayerSettings && (
-                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl py-3 shadow-[0_0_40px_rgba(0,0,0,0.5)] z-50 w-64 text-left pointer-events-auto keep-menus-open font-sans">
-                    <div className="px-5 py-2 border-b border-gray-100 text-black text-sm font-extrabold mb-1">
-                      Quality
-                    </div>
-                    <div className="max-h-60 overflow-y-auto no-scrollbar">
-                      {availableQualities.map((item) => {
-                        const isAuto = item.index === -1;
-                        const displayName = isAuto && activeResolution ? `Auto (${activeResolution})` : item.name;
-                        
-                        return (
-                          <button key={item.index} onClick={() => selectQuality(item)} className="w-full text-left px-5 py-3 text-sm transition flex items-center justify-between text-gray-800 hover:bg-gray-100">
-                            <span className={quality === item.name ? 'font-black text-black' : 'font-medium'}>{displayName}</span>
-                            {quality === item.name && <svg className="w-4 h-4 fill-current text-black" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
               </div>
+
             </div>
           </div>
 
