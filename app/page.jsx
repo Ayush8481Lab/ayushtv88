@@ -982,12 +982,33 @@ export default function PerfectPlayerUI() {
                 <span className="text-white text-sm font-bold mt-2 drop-shadow-md">+{Math.abs(skipAccumulator)}s</span>
               </div>
 
-              {/* BUFFERING SPINNER */}
-              <div className={`absolute inset-0 flex items-center justify-center bg-black/40 z-20 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
+              {/* PERFECTLY CENTERED BUFFERING SPINNER */}
+              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none transition-opacity duration-300 ${isBuffering ? 'opacity-100' : 'opacity-0'}`}>
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
-              {/* CONTROLS OVERLAY */}
+              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP (Geometrically Exact Center) */}
+              <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-20 w-full transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
+                  <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                </button>
+                <div className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md ${pointerEventsClass}`}>
+                  {!isBuffering && (
+                    <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
+                      {isPlaying ? (
+                        <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+                      ) : (
+                        <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white translate-x-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                      )}
+                    </button>
+                  )}
+                </div>
+                <button onClick={(e) => handleButtonSkip(false, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
+                  <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+
+              {/* CONTROLS OVERLAY (Top & Bottom Bars) */}
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
@@ -1004,32 +1025,11 @@ export default function PerfectPlayerUI() {
                   </div>
                 </div>
 
-                {/* Center Controls (PERFECTLY CENTERED - DETACHED FROM FLEX COLUMN FLOW) */}
-                <div className="absolute inset-0 flex items-center justify-center gap-14 sm:gap-20 md:gap-24 pointer-events-none z-0">
-                  <button onClick={(e) => handleButtonSkip(true, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
-                    <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-                  </button>
-                  <div className={`w-12 h-12 md:w-16 md:h-16 flex items-center justify-center drop-shadow-md ${pointerEventsClass}`}>
-                    {!isBuffering && (
-                      <button onClick={togglePlay} className="transition-transform hover:scale-110 active:scale-95 focus:outline-none">
-                        {isPlaying ? (
-                          <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
-                        ) : (
-                          <svg className="w-10 h-10 md:w-12 md:h-12 text-white fill-white translate-x-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <button onClick={(e) => handleButtonSkip(false, e)} className={`focus:outline-none transition-transform hover:scale-105 active:scale-90 flex items-center drop-shadow-md ${pointerEventsClass}`}>
-                    <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                  </button>
-                </div>
-
-                {/* Bottom Bar: REORDERED TIMELINE ON TOP, ICONS ON BOTTOM */}
+                {/* Bottom Bar */}
                 <div className={`flex flex-col gap-2 ${pointerEventsClass} pb-2 w-full mt-auto relative z-10`}>
                   
-                  {/* Range Slider / Blue Glider (MOVED UP) */}
-                  <div className="relative flex items-center w-full mb-1">
+                  {/* Range Slider / Blue Glider With 0.25cm Space (px-[10px]) on edges */}
+                  <div className="relative flex items-center w-full mb-1 px-[10px]">
                     <input 
                       type="range" 
                       min={isLiveStream ? seekRange.start : 0} 
@@ -1041,16 +1041,30 @@ export default function PerfectPlayerUI() {
                     />
                   </div>
 
-                  {/* Settings & Time Icons (MOVED DOWN) */}
+                  {/* Settings & Time Icons */}
                   <div className="flex items-center justify-between text-sm text-gray-100 drop-shadow-md">
                     
-                    {/* Time / Live Latency Sync */}
+                    {/* Time / Live Latency Sync with Go Live Button */}
                     {isLiveStream ? (
-                      <div onClick={seekToLiveEdge} className="flex items-center gap-1.5 font-bold tracking-wide text-sm cursor-pointer hover:scale-105 transition-transform">
+                      <div className="flex items-center font-bold tracking-wide text-sm">
                         {liveLatencyText === 'LIVE' ? (
-                          <><span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span><span className="text-red-500 font-black tracking-widest drop-shadow-lg">LIVE</span></>
+                          <div onClick={seekToLiveEdge} className="flex items-center gap-1.5 cursor-pointer hover:scale-105 transition-transform">
+                            <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
+                            <span className="text-red-500 font-black tracking-widest drop-shadow-lg">LIVE</span>
+                          </div>
                         ) : (
-                          <><span className="w-2 h-2 rounded-full bg-gray-400"></span><span className="text-gray-300 font-semibold">{liveLatencyText}</span></>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 text-gray-300">
+                              <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                              <span className="font-semibold">{liveLatencyText}</span>
+                            </div>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); seekToLiveEdge(); }} 
+                              className="px-2 py-0.5 ml-1 rounded bg-gray-600/80 hover:bg-gray-500 text-white text-[10px] md:text-xs font-bold uppercase tracking-wider transition-colors drop-shadow-md shadow-sm pointer-events-auto cursor-pointer"
+                            >
+                              Go Live
+                            </button>
+                          </div>
                         )}
                       </div>
                     ) : (
