@@ -116,7 +116,8 @@ ${base}/live_480p/chunks.m3u8
 ${base}/live_720p/chunks.m3u8`;
 };
 
-const CATEGORY_ORDER = ['All', 'Premium', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
+// Added Zee5 strictly mapped into category order natively
+const CATEGORY_ORDER = ['All', 'Premium', 'Zee5', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
 
 // Format time utility
 const formatDuration = (seconds) => {
@@ -361,12 +362,15 @@ export default function PerfectPlayerUI() {
       try {
         setIsLoading(true);
         const ts = new Date().getTime();
-        const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes] = await Promise.allSettled([
+        
+        // ADDED ZEE5 API FETCH ALONG WITH PREVIOUS APIS
+        const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes, zeeRes] = await Promise.allSettled([
           fetch('https://allinonereborn2.online/jstrweb2/cookies.json'),
           fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${ts}`),
           fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${ts}`),
           fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`),
-          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`)
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`),
+          fetch(`https://allinonereborn2.online/zee5/channels199.json?t=${ts}`)
         ]);
 
         if (tokenRes.status === 'fulfilled') {
@@ -428,13 +432,34 @@ export default function PerfectPlayerUI() {
           } catch (e) {}
         }
 
+        // NEW: ZEE5 DATA PROCESSING
+        let zeeData = [];
+        if (zeeRes.status === 'fulfilled') {
+          try {
+            const zeeJson = await zeeRes.value.json();
+            if (zeeJson && zeeJson.channels) {
+              zeeData = zeeJson.channels.map(c => ({
+                id: c.name.replace(/\s+/g, '_').toLowerCase(),
+                name: c.name,
+                url: c.mpd,
+                keyId: c.clearkey?.keyId || null,
+                key: c.clearkey?.key || null,
+                cookie: "",
+                category: 'Zee5',
+                logo: c.logo
+              }));
+            }
+          } catch (e) {}
+        }
+
         const customChannels = [
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
         ];
 
-        const rawCombined = [...premiumData, ...customChannels, ...standardData];
+        // ADDED ZEE5 TO RAW COMBINED
+        const rawCombined = [...premiumData, ...zeeData, ...customChannels, ...standardData];
 
         const combined = rawCombined.map(c => {
           const cid = String(c.id || c.channel_id || "");
@@ -971,6 +996,7 @@ export default function PerfectPlayerUI() {
                   activeCategory === cat ? 'bg-[#0084ff] text-white shadow-md' 
                   : cat === 'Favorites' ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
                   : cat === 'Premium' ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                  : cat === 'Zee5' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20'
                   : 'bg-blue-900/20 text-blue-200/70 hover:bg-blue-900/40'
                 }`}
               >
@@ -1262,13 +1288,11 @@ export default function PerfectPlayerUI() {
                 )}
               </div>
               
-    
-
               <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-2 gap-3 pb-2 overflow-y-auto scroll-smooth overscroll-none no-scrollbar content-start flex-1">
-  {similarChannels.map((c, idx) => (
-    <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
-  ))}
-</div>
+                {similarChannels.map((c, idx) => (
+                  <ChannelCard key={idx} channel={c} isActive={false} onClick={handleChannelSelect} />
+                ))}
+              </div>
             </div>
           )}
 
