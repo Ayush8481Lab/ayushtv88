@@ -113,7 +113,7 @@ const getAryDigitalUrl = () => {
     if (hour >= 0 && hour < 6) return 'https://arydigitalserver1.naturalb492.workers.dev/play.m3u8';
     if (hour >= 6 && hour < 12) return 'https://arydigitalserver2.ayush848yadav.workers.dev/play.m3u8';
     if (hour >= 12 && hour < 18) return 'https://arydigitalserver3.yaouttubeindia.workers.dev/play.m3u8';
-    return 'https://arydigitalserver4.azchandan753.workers.dev/play.m3u8';
+    return 'https://ayushproxy.vercel.app/api/proxy?url=https://dishmt.slivcdn.com/hls/live/2011749/SABHD/hdntl=exp=1784353170~acl=/*~id=bb05a432-1e07-4a06-a12c-be7a3f75ceb5~data=hdntl~hmac=3292a8e13a936a42bc5a402883efc2fd2d5b1fe959c5b04b353918e4366f3d66/master_108.m3u8?aka_me_session_id=AAAAAAAAAACSEVtqAAAAAEjmtWmv2G15C74muc9DoxLgcCqiH6gcsi/DuLHGM70AZzISEdOd2m6L2Xgi8cb7c1Anc0KD44s3&aka_media_format_type=hls';
   } catch (e) {
     // Fallback if local time parsing fails
     const h = new Date().getHours();
