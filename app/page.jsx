@@ -251,7 +251,6 @@ export default function PerfectPlayerUI() {
 
       setFavorites(JSON.parse(localStorage.getItem('fav_channels_8481') || '[]'));
       
-      // Parse History (Handles conversion from old single object format to new 4-item array)
       let savedHistory = JSON.parse(localStorage.getItem('last_played_8481') || '[]');
       if (!Array.isArray(savedHistory)) {
         savedHistory = savedHistory && savedHistory.id ? [{ id: savedHistory.id, name: savedHistory.name }] : [];
@@ -270,14 +269,12 @@ export default function PerfectPlayerUI() {
   useEffect(() => { activeChannelRef.current = activeChannel; }, [activeChannel]);
   useEffect(() => { showPlayerSettingsRef.current = showPlayerSettings; }, [showPlayerSettings]);
 
-  // TV Remote & Keyboard Event Listener (Fire TV Compatible)
+  // TV Remote & Keyboard Event Listener
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ignore if typing in the search bar
       const isInput = e.target.tagName === 'INPUT';
       if (isInput && e.key !== 'Escape') return;
 
-      // Global TV Remote Media Keys
       if (['MediaPlayPause', 'MediaPlay', 'MediaPause'].includes(e.code) || e.key === 'MediaPlayPause') {
         if (videoRef.current) {
           if (videoRef.current.paused) videoRef.current.play().catch(()=>{});
@@ -287,33 +284,24 @@ export default function PerfectPlayerUI() {
         return;
       }
 
-      // Back / Escape button handling (Tizen back is 10009)
       if (e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 10009) {
         if (showPlayerSettingsRef.current) {
           setShowPlayerSettings(false);
           e.preventDefault();
         } else if (activeChannelRef.current && !isInput) {
-          setActiveChannel(null); // Force local state reset
+          setActiveChannel(null);
           if (window.history.state && window.history.state.playerOpen) window.history.back();
           e.preventDefault();
         }
         return;
       }
 
-      // Video Navigation (Active Player)
       if (activeChannelRef.current && !showPlayerSettingsRef.current && !isInput) {
         const isButton = e.target.tagName === 'BUTTON';
-
         if (e.key === 'ArrowLeft' || e.key === 'MediaRewind') {
-          if (!isButton) { // only shortcut if not highlighting a button via D-pad
-            e.preventDefault();
-            handleButtonSkip(true, null);
-          }
+          if (!isButton) { e.preventDefault(); handleButtonSkip(true, null); }
         } else if (e.key === 'ArrowRight' || e.key === 'MediaFastForward') {
-          if (!isButton) {
-            e.preventDefault();
-            handleButtonSkip(false, null);
-          }
+          if (!isButton) { e.preventDefault(); handleButtonSkip(false, null); }
         } else if (e.key === ' ' || e.key === 'Enter') {
           if (!isButton) {
             e.preventDefault();
@@ -323,18 +311,16 @@ export default function PerfectPlayerUI() {
             }
           }
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          // Wake controls on up/down
           setShowControls(true);
           resetControlsTimer();
         }
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Smart Fullscreen & Orientation Listeners
+  // Fullscreen & Orientation Checkers
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -344,34 +330,29 @@ export default function PerfectPlayerUI() {
   useEffect(() => {
     const handleOrientationChange = () => {
       if (!activeChannelRef.current || !containerRef.current) return;
-      
       const checkOrientation = () => {
         const isLandscape = window.matchMedia("(orientation: landscape)").matches;
         if (isLandscape && !document.fullscreenElement) {
            if (containerRef.current.requestFullscreen) {
              containerRef.current.requestFullscreen().catch(()=>{});
-           } else if (videoRef.current?.webkitEnterFullscreen) { // iOS fallback
+           } else if (videoRef.current?.webkitEnterFullscreen) {
              videoRef.current.webkitEnterFullscreen();
            }
         } else if (!isLandscape && document.fullscreenElement) {
            if (document.exitFullscreen) {
              document.exitFullscreen().catch(()=>{});
-           } else if (videoRef.current?.webkitExitFullscreen) { // iOS fallback
+           } else if (videoRef.current?.webkitExitFullscreen) {
              videoRef.current.webkitExitFullscreen();
            }
         }
       };
-
-      // Check immediately and fallback slightly after layout computes
       setTimeout(checkOrientation, 300);
       setTimeout(checkOrientation, 800);
     };
-
     window.addEventListener('orientationchange', handleOrientationChange);
     return () => window.removeEventListener('orientationchange', handleOrientationChange);
   }, []);
 
-  // Auto PiP on background
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState === 'hidden' && activeChannelRef.current && videoRef.current) {
@@ -394,7 +375,6 @@ export default function PerfectPlayerUI() {
         setIsLoading(true);
         const ts = new Date().getTime();
         
-        // Added SonyLiv Fetch along with previous APIs
         const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes, zeeRes, sonyRes] = await Promise.allSettled([
           fetch('https://allinonereborn2.online/jstrweb2/cookies.json'),
           fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${ts}`),
@@ -483,7 +463,6 @@ export default function PerfectPlayerUI() {
           } catch (e) {}
         }
 
-        // NEW: SONYLIV DATA PROCESSING
         let sonyData = [];
         if (sonyRes.status === 'fulfilled') {
           try {
@@ -491,7 +470,7 @@ export default function PerfectPlayerUI() {
             sonyData = Object.values(sonyJson).map(c => ({
               id: c.id,
               name: c.title,
-              // Initial fetch goes via royal-firefly, handled properly in our Network Interceptor
+              // Keep original link for master request
               url: `https://royal-firefly-881d.indianboy8948.workers.dev/?url=${c.m3u8}`,
               keyId: null,
               key: null,
@@ -510,7 +489,6 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // Combine everything including SonyLiv
         const rawCombined = [...premiumData, ...sonyData, ...zeeData, ...standardData, ...customChannels];
 
         const combined = rawCombined.map(c => {
@@ -543,7 +521,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION (NO DEFAULT UI)
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -557,7 +535,7 @@ export default function PerfectPlayerUI() {
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
         
-        // If error occurs while playing SonyLiv, rotate the proxy for the next time/retry.
+        // Handle SonyLiv Proxy Rotation on Error
         if (activeChannelRef.current?.category === 'SonyLiv') {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % 4; 
         }
@@ -575,37 +553,29 @@ export default function PerfectPlayerUI() {
 
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
-        
-        // Setup Video Qualities
         const uniqueVideo = new Map();
         tracks.forEach(t => { if (t.height && !uniqueVideo.has(t.height)) uniqueVideo.set(t.height, t); });
         const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
         setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
 
-        // Setup Audio Qualities
         const uniqueAudio = new Map();
         tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
         const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
         setAudioTracks(sortedAudio);
         
-        // Auto-Lock Highest Audio Logic
         if (sortedAudio.length > 0 && !isUserManualAudio.current) {
           const highestAudioTrack = sortedAudio[0];
           setSelectedAudio(highestAudioTrack.audioBandwidth);
           
           if (sortedAudio.length > 1) {
             isUserManualAudio.current = true;
-            player.configure({ abr: { enabled: false } }); // Lock ABR
-            
+            player.configure({ abr: { enabled: false } });
             const activeTrack = tracks.find(t => t.active);
             const targetHeight = activeTrack ? activeTrack.height : (sortedVideo.length > 0 ? sortedVideo[0].height : null);
-            
-            // Try to match highest audio with active video height first
             let targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth && t.height === targetHeight);
             if (!targetVariant) {
                targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth);
             }
-            
             if (targetVariant) {
               player.selectVariantTrack(targetVariant, true, true);
             }
@@ -613,71 +583,114 @@ export default function PerfectPlayerUI() {
         }
       });
 
+      // ----------------------------------------------------
+      // REQUEST FILTER (Applies proxy URLs properly)
+      // ----------------------------------------------------
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
-        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
-        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
-        
-        if (isManifest || isSegment) {
+        const currentCh = activeChannelRef.current;
+        if (!currentCh || !currentCh.url) return;
+        let uri = request.uris[0];
+
+        // SONYLIV LOGIC
+        if (currentCh.category === 'SonyLiv') {
+            let targetUrl = uri;
+            
+            // 1. Unpack any existing proxy wrapper to get pure target URL
+            if (targetUrl.includes('url=')) {
+                const innerStr = targetUrl.split('url=')[1];
+                try {
+                    const decoded = decodeURIComponent(innerStr);
+                    if (decoded.startsWith('http')) {
+                        targetUrl = decoded; 
+                    }
+                } catch (e) {}
+            }
+
+            // 2. If the target URL points to slivcdn, wrap it with the current active Ayush proxy
+            if (targetUrl.includes('slivcdn.com')) {
+                const proxyBases = [
+                    'https://ayushproxyserver1.vercel.app/api/proxy?url=',
+                    'https://ayushproxyserver2.vercel.app/api/proxy?url=',
+                    'https://ayushproxyserver3.vercel.app/api/proxy?url=',
+                    'https://ayushproxyserver4.vercel.app/api/proxy?url='
+                ];
+                const activeProxy = proxyBases[sonyProxyIndexRef.current];
+                request.uris[0] = activeProxy + targetUrl; 
+                return;
+            }
+        }
+
+        // DEFAULT JIO TOKEN LOGIC
+        if (currentCh.url.includes('__hdnea__=')) {
+            const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
+            if (tokenMatch && !uri.includes('__hdnea__=')) {
+                request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
+            }
+            return; 
+        }
+        const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
+        if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+           const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+           request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
+        }
+      });
+
+      // ----------------------------------------------------
+      // RESPONSE FILTER (Crucial for HLS relative paths & Proxy setups)
+      // ----------------------------------------------------
+      player.getNetworkingEngine().registerResponseFilter((type, response) => {
           const currentCh = activeChannelRef.current;
-          if (!currentCh || !currentCh.url) return;
-          let uri = request.uris[0];
+          if (!currentCh) return;
 
-          // ----------------------------------------------------
-          // NEW: SONYLIV MULTI-PROXY ROTATION LOGIC
-          // ----------------------------------------------------
-          if (currentCh.category === 'SonyLiv') {
-              let targetUrl = uri;
-
-              // 1. Extract inner slivcdn URL if wrapped in royal-firefly worker by the initial playlist
-              if (targetUrl.includes('royal-firefly-881d') && targetUrl.includes('url=')) {
-                  const innerUrlStr = targetUrl.split('url=')[1];
+          // Only process Manifests for SonyLiv
+          if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST && currentCh.category === 'SonyLiv') {
+              const text = new TextDecoder().decode(response.data);
+              if (!text.startsWith('#EXTM3U')) return;
+              
+              // Find the true base URL for resolving relative links (stripping the proxy wrapper)
+              let baseTargetUrl = response.uri;
+              if (baseTargetUrl.includes('url=')) {
                   try {
-                      const decodedInner = decodeURIComponent(innerUrlStr);
-                      if (decodedInner.includes('slivcdn.com')) {
-                          targetUrl = decodedInner;
-                      }
-                  } catch (e) {} // Fallback gracefully if decode fails
+                      baseTargetUrl = decodeURIComponent(baseTargetUrl.split('url=')[1]);
+                  } catch(e) {}
               }
 
-              // 2. Clean up any previously applied proxy (useful if Shaka retries the same request object)
-              const proxyBases = [
-                  'https://ayushproxyserver1.vercel.app/api/proxy?url=',
-                  'https://ayushproxyserver2.vercel.app/api/proxy?url=',
-                  'https://ayushproxyserver3.vercel.app/api/proxy?url=',
-                  'https://ayushproxyserver4.vercel.app/api/proxy?url='
-              ];
-              
-              for (const proxy of proxyBases) {
-                  if (targetUrl.startsWith(proxy)) {
-                      targetUrl = targetUrl.substring(proxy.length); 
-                      break;
+              const lines = text.split('\n');
+              let modified = false;
+
+              for (let i = 0; i < lines.length; i++) {
+                  const line = lines[i].trim();
+                  if (!line) continue;
+
+                  if (line.startsWith('#')) {
+                      // Fix EXT-X-KEY relative URIs
+                      if (line.startsWith('#EXT-X-KEY:')) {
+                          const match = line.match(/URI="([^"]+)"/);
+                          if (match && !match[1].startsWith('http')) {
+                              try {
+                                  const absKey = new URL(match[1], baseTargetUrl).href;
+                                  lines[i] = line.replace(match[1], absKey);
+                                  modified = true;
+                              } catch(e){}
+                          }
+                      }
+                      continue;
+                  }
+
+                  // If it's a relative URL (e.g. segment_0.ts), make it absolute!
+                  // This prevents Shaka from resolving it against the proxy URL and destroying the structure.
+                  if (!line.startsWith('http')) {
+                      try {
+                          lines[i] = new URL(line, baseTargetUrl).href;
+                          modified = true;
+                      } catch (e) {}
                   }
               }
 
-              // 3. Prepend the CURRENT rotating active proxy when it hits slivcdn
-              if (targetUrl.includes('slivcdn.com')) {
-                  const currentProxy = proxyBases[sonyProxyIndexRef.current];
-                  request.uris[0] = currentProxy + targetUrl;
-                  return; // Stop processing further rules for SonyLiv
+              if (modified) {
+                  response.data = new TextEncoder().encode(lines.join('\n'));
               }
           }
-
-          // ----------------------------------------------------
-          // EXISTING JIO TV / STANDARD TOKEN LOGIC
-          // ----------------------------------------------------
-          if (currentCh.url.includes('__hdnea__=')) {
-              const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
-              if (tokenMatch && !uri.includes('__hdnea__=')) {
-                  request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
-              }
-              return; 
-          }
-          const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
-          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-             request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
-          }
-        }
       });
 
       playerRef.current = player;
@@ -711,7 +724,6 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
         
-        // Prioritize highest bandwidth globally upfront
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
@@ -722,7 +734,6 @@ export default function PerfectPlayerUI() {
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
 
-        // Custom M3U8 Master Generation & Time-Based Injections
         if (finalUrl === 'hum_tv_master_custom_generation') {
            const masterStr = buildHumTvMasterPlaylist();
            const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
@@ -945,17 +956,12 @@ export default function PerfectPlayerUI() {
     isUserManualAudio.current = true; // Lock audio manual preference
     
     if (playerRef.current) {
-      // Disable ABR completely so it stays locked to this selected variant
       playerRef.current.configure({ abr: { enabled: false } });
-      
       const tracks = playerRef.current.getVariantTracks();
       const activeTrack = tracks.find(t => t.active);
       const targetHeight = activeTrack ? activeTrack.height : null;
       
-      // Try to match the same video resolution with the new audio track first
       let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
-      
-      // If no exact match, just get any variant with that audio bandwidth
       if (!targetTrack) {
         targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
       }
@@ -973,7 +979,6 @@ export default function PerfectPlayerUI() {
     setActiveChannel(channel);
     setSearchQuery('');
     
-    // Manage History: Keep up to 4 items, store only {id, name}
     setLastPlayedHistory(prev => {
       const filtered = prev.filter(c => c.name !== channel.name && c.id !== channel.id);
       const updated = [{ id: channel.id, name: channel.name }, ...filtered].slice(0, 4);
@@ -1019,7 +1024,6 @@ export default function PerfectPlayerUI() {
     });
   }, [channels, activeChannel]);
 
-  // Construct history objects dynamically from fresh fetched data
   const historyChannelsToRender = useMemo(() => {
     return lastPlayedHistory
       .map(hist => channels.find(c => (c.id && c.id === hist.id) || (c.name && c.name === hist.name)))
@@ -1070,7 +1074,6 @@ export default function PerfectPlayerUI() {
         .dly-1 { animation-delay: 0.1s; }
         .dly-2 { animation-delay: 0.2s; }
         
-        /* Premium Bottom Sheet / Modal Animations */
         @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .yt-modal-mobile { animation: popUpModalMobile 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
