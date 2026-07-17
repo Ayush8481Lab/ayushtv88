@@ -101,7 +101,7 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
 ChannelCard.displayName = "ChannelCard";
 
 // ==========================================
-// DYNAMIC M3U8 MASTER GENERATOR
+// DYNAMIC M3U8 MASTER GENERATORS
 // ==========================================
 const buildMasterPlaylist = (url) => {
   const base = url.substring(0, url.indexOf('/live_'));
@@ -114,6 +114,16 @@ ${base}/live_360p/chunks.m3u8
 ${base}/live_480p/chunks.m3u8
 #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
 ${base}/live_720p/chunks.m3u8`;
+};
+
+const buildHumTvMasterPlaylist = () => {
+  return `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,CODECS="avc1.4d401e,mp4a.40.2"
+https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66.sdp/HUM/TV3/chunks_dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=854x480,CODECS="avc1.4d401f,mp4a.40.2"
+https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66.sdp/HUM/TV2/chunks_dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d401f,mp4a.40.2"
+https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66.sdp/HUM/TV1/chunks_dvr.m3u8`;
 };
 
 // Added Zee5 strictly mapped into category order natively
@@ -455,7 +465,9 @@ export default function PerfectPlayerUI() {
         const customChannels = [
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
-          { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" }
+          { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" },
+          { name: "ARY Digital", url: "https://ayushplayarydigital.wonder945177.workers.dev/play.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Ary_Digital_Logo.png" },
+          { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
         // ADDED ZEE5 TO RAW COMBINED
@@ -618,7 +630,14 @@ export default function PerfectPlayerUI() {
 
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
-        if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
+
+        // Custom M3U8 Master Generation Injections
+        if (finalUrl === 'hum_tv_master_custom_generation') {
+           const masterStr = buildHumTvMasterPlaylist();
+           const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
+           finalUrl = URL.createObjectURL(blob);
+           forceMimeType = 'application/x-mpegURL';
+        } else if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
            const masterStr = buildMasterPlaylist(finalUrl);
            const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
            finalUrl = URL.createObjectURL(blob);
