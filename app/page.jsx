@@ -115,7 +115,6 @@ const getAryDigitalUrl = () => {
     if (hour >= 12 && hour < 18) return 'https://arydigitalserver3.yaouttubeindia.workers.dev/play.m3u8';
     return 'https://arydigitalserver4.azchandan753.workers.dev/play.m3u8';
   } catch (e) {
-    // Fallback if local time parsing fails
     const h = new Date().getHours();
     if (h >= 0 && h < 6) return 'https://arydigitalserver1.naturalb492.workers.dev/play.m3u8';
     if (h >= 6 && h < 12) return 'https://arydigitalserver2.ayush848yadav.workers.dev/play.m3u8';
@@ -147,8 +146,8 @@ https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66
 https://g4wlkwx8l23a-hls-live.5centscdn.com/HUM/271ddf829afeece44d8732757fba1a66.sdp/HUM/TV1/chunks_dvr.m3u8`;
 };
 
-// Added Zee5 strictly mapped into category order natively
-const CATEGORY_ORDER = ['All', 'Premium', 'Zee5', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
+// Added SonyLiv to the Category Order natively
+const CATEGORY_ORDER = ['All', 'Premium', 'SonyLiv', 'Zee5', 'Favorites', 'Sports', 'Entertainment', 'News', 'Movies', 'Music', 'Kids', 'Bhojpuri'];
 
 // Format time utility
 const formatDuration = (seconds) => {
@@ -221,6 +220,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
+  const sonyProxyIndexRef = useRef(0); // For handling Sony proxy rotating limits
   
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
@@ -394,14 +394,15 @@ export default function PerfectPlayerUI() {
         setIsLoading(true);
         const ts = new Date().getTime();
         
-        // ADDED ZEE5 API FETCH ALONG WITH PREVIOUS APIS
-        const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes, zeeRes] = await Promise.allSettled([
+        // Added SonyLiv Fetch along with previous APIs
+        const [tokenRes, standardRes, premRes, dictKeysRes, dictUrlsRes, zeeRes, sonyRes] = await Promise.allSettled([
           fetch('https://allinonereborn2.online/jstrweb2/cookies.json'),
           fetch(`https://jtvxweb.pages.dev/jstr4web.json?t=${ts}`),
           fetch(`https://sayan-json-3.pages.dev/Data/sports.json?t=${ts}`),
           fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`),
           fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`),
-          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/zee5/channels199.json?t=${ts}`)
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/zee5/channels199.json?t=${ts}`),
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/sony/sliv3.json?t=${ts}`)
         ]);
 
         if (tokenRes.status === 'fulfilled') {
@@ -463,7 +464,6 @@ export default function PerfectPlayerUI() {
           } catch (e) {}
         }
 
-        // NEW: ZEE5 DATA PROCESSING
         let zeeData = [];
         if (zeeRes.status === 'fulfilled') {
           try {
@@ -483,6 +483,25 @@ export default function PerfectPlayerUI() {
           } catch (e) {}
         }
 
+        // NEW: SONYLIV DATA PROCESSING
+        let sonyData = [];
+        if (sonyRes.status === 'fulfilled') {
+          try {
+            const sonyJson = await sonyRes.value.json();
+            sonyData = Object.values(sonyJson).map(c => ({
+              id: c.id,
+              name: c.title,
+              // Initial fetch goes via royal-firefly (as requested).
+              url: `https://royal-firefly-881d.indianboy8948.workers.dev/?url=${c.m3u8}`,
+              keyId: null,
+              key: null,
+              cookie: "",
+              category: 'SonyLiv',
+              logo: c.logo
+            }));
+          } catch (e) {}
+        }
+
         const customChannels = [
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
@@ -491,8 +510,8 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // ADDED customChannels to the END of the array to force them to the bottom of the list
-        const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels];
+        // Combine everything including SonyLiv
+        const rawCombined = [...premiumData, ...sonyData, ...zeeData, ...standardData, ...customChannels];
 
         const combined = rawCombined.map(c => {
           const cid = String(c.id || c.channel_id || "");
@@ -537,6 +556,12 @@ export default function PerfectPlayerUI() {
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
+        
+        // If error occurs while playing SonyLiv, rotate the proxy for the next time/retry.
+        if (activeChannelRef.current?.category === 'SonyLiv') {
+           sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % 4; // 4 proxies available
+        }
+        
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
@@ -591,10 +616,54 @@ export default function PerfectPlayerUI() {
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+        
         if (isManifest || isSegment) {
           const currentCh = activeChannelRef.current;
           if (!currentCh || !currentCh.url) return;
           let uri = request.uris[0];
+
+          // ----------------------------------------------------
+          // NEW: SONYLIV MULTI-PROXY ROTATION LOGIC
+          // ----------------------------------------------------
+          if (currentCh.category === 'SonyLiv') {
+              let targetUrl = uri;
+
+              // 1. Clean up any previously applied proxy (useful if Shaka retries the same request object)
+              const proxyBases = [
+                  'https://ayushproxyserver1.vercel.app/api/proxy?url=',
+                  'https://ayushproxyserver2.vercel.app/api/proxy?url=',
+                  'https://ayushproxyserver3.vercel.app/api/proxy?url=',
+                  'https://ayushproxyserver4.vercel.app/api/proxy?url='
+              ];
+              
+              for (const proxy of proxyBases) {
+                  if (targetUrl.startsWith(proxy)) {
+                      targetUrl = targetUrl.substring(proxy.length); 
+                      break;
+                  }
+              }
+
+              // 2. Extract inner slivcdn URL if wrapped in royal-firefly worker by the initial playlist
+              if (targetUrl.includes('royal-firefly-881d') && targetUrl.includes('url=')) {
+                  const innerUrlStr = targetUrl.split('url=')[1];
+                  const decodedInner = decodeURIComponent(innerUrlStr);
+                  // Only map it if it points to the slivcdn segments/manifests
+                  if (decodedInner.includes('slivcdn.com')) {
+                      targetUrl = decodedInner;
+                  }
+              }
+
+              // 3. Prepend the CURRENT rotating active proxy when it hits slivcdn
+              if (targetUrl.includes('slivcdn.com')) {
+                  const currentProxy = proxyBases[sonyProxyIndexRef.current];
+                  request.uris[0] = currentProxy + targetUrl;
+                  return; // Stop processing further rules for SonyLiv
+              }
+          }
+
+          // ----------------------------------------------------
+          // EXISTING JIO TV / STANDARD TOKEN LOGIC
+          // ----------------------------------------------------
           if (currentCh.url.includes('__hdnea__=')) {
               const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
               if (tokenMatch && !uri.includes('__hdnea__=')) {
@@ -1038,6 +1107,7 @@ export default function PerfectPlayerUI() {
                   activeCategory === cat ? 'bg-[#0084ff] text-white shadow-md' 
                   : cat === 'Favorites' ? 'bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/20'
                   : cat === 'Premium' ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20' 
+                  : cat === 'SonyLiv' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20'
                   : cat === 'Zee5' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20'
                   : 'bg-blue-900/20 text-blue-200/70 hover:bg-blue-900/40'
                 }`}
