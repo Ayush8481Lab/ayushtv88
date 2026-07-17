@@ -101,8 +101,29 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
 ChannelCard.displayName = "ChannelCard";
 
 // ==========================================
-// DYNAMIC M3U8 MASTER GENERATORS
+// DYNAMIC URL & M3U8 MASTER GENERATORS
 // ==========================================
+const getAryDigitalUrl = () => {
+  try {
+    const date = new Date();
+    const istString = date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const istDate = new Date(istString);
+    const hour = istDate.getHours();
+
+    if (hour >= 0 && hour < 6) return 'https://arydigitalserver1.naturalb492.workers.dev/play.m3u8';
+    if (hour >= 6 && hour < 12) return 'https://arydigitalserver2.ayush848yadav.workers.dev/play.m3u8';
+    if (hour >= 12 && hour < 18) return 'https://arydigitalserver3.yaouttubeindia.workers.dev/play.m3u8';
+    return 'https://arydigitalserver4.azchandan753.workers.dev/play.m3u8';
+  } catch (e) {
+    // Fallback if local time parsing fails
+    const h = new Date().getHours();
+    if (h >= 0 && h < 6) return 'https://arydigitalserver1.naturalb492.workers.dev/play.m3u8';
+    if (h >= 6 && h < 12) return 'https://arydigitalserver2.ayush848yadav.workers.dev/play.m3u8';
+    if (h >= 12 && h < 18) return 'https://arydigitalserver3.yaouttubeindia.workers.dev/play.m3u8';
+    return 'https://arydigitalserver4.azchandan753.workers.dev/play.m3u8';
+  }
+};
+
 const buildMasterPlaylist = (url) => {
   const base = url.substring(0, url.indexOf('/live_'));
   return `#EXTM3U
@@ -466,12 +487,12 @@ export default function PerfectPlayerUI() {
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" },
-          { name: "ARY Digital", url: "https://arydigitalserver1.naturalb492.workers.dev/play.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Ary_Digital_Logo.png" },
+          { name: "ARY Digital", url: "ary_digital_dynamic_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Ary_Digital_Logo.png" },
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // ADDED ZEE5 TO RAW COMBINED
-        const rawCombined = [...premiumData, ...zeeData, ...customChannels, ...standardData];
+        // ADDED customChannels to the END of the array to force them to the bottom of the list
+        const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels];
 
         const combined = rawCombined.map(c => {
           const cid = String(c.id || c.channel_id || "");
@@ -631,12 +652,14 @@ export default function PerfectPlayerUI() {
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
 
-        // Custom M3U8 Master Generation Injections
+        // Custom M3U8 Master Generation & Time-Based Injections
         if (finalUrl === 'hum_tv_master_custom_generation') {
            const masterStr = buildHumTvMasterPlaylist();
            const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
            finalUrl = URL.createObjectURL(blob);
            forceMimeType = 'application/x-mpegURL';
+        } else if (finalUrl === 'ary_digital_dynamic_generation') {
+           finalUrl = getAryDigitalUrl();
         } else if (finalUrl.includes('/live_') && finalUrl.includes('/chunks.m3u8')) {
            const masterStr = buildMasterPlaylist(finalUrl);
            const blob = new Blob([masterStr], { type: 'application/x-mpegURL' });
