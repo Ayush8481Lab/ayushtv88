@@ -402,7 +402,7 @@ export default function PerfectPlayerUI() {
           fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`),
           fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`),
           fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/zee5/channels199.json?t=${ts}`),
-          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/sony/sliv3.json?t=${ts}`)
+          fetch(`https://allinonereborn2.online/sony/sliv3.json?t=${ts}`)
         ]);
 
         if (tokenRes.status === 'fulfilled') {
@@ -491,7 +491,7 @@ export default function PerfectPlayerUI() {
             sonyData = Object.values(sonyJson).map(c => ({
               id: c.id,
               name: c.title,
-              // Initial fetch goes via royal-firefly (as requested).
+              // Initial fetch goes via royal-firefly, handled properly in our Network Interceptor
               url: `https://royal-firefly-881d.indianboy8948.workers.dev/?url=${c.m3u8}`,
               keyId: null,
               key: null,
@@ -543,7 +543,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION (NO DEFAULT UI)
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -559,7 +559,7 @@ export default function PerfectPlayerUI() {
         
         // If error occurs while playing SonyLiv, rotate the proxy for the next time/retry.
         if (activeChannelRef.current?.category === 'SonyLiv') {
-           sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % 4; // 4 proxies available
+           sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % 4; 
         }
         
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
@@ -628,7 +628,18 @@ export default function PerfectPlayerUI() {
           if (currentCh.category === 'SonyLiv') {
               let targetUrl = uri;
 
-              // 1. Clean up any previously applied proxy (useful if Shaka retries the same request object)
+              // 1. Extract inner slivcdn URL if wrapped in royal-firefly worker by the initial playlist
+              if (targetUrl.includes('royal-firefly-881d') && targetUrl.includes('url=')) {
+                  const innerUrlStr = targetUrl.split('url=')[1];
+                  try {
+                      const decodedInner = decodeURIComponent(innerUrlStr);
+                      if (decodedInner.includes('slivcdn.com')) {
+                          targetUrl = decodedInner;
+                      }
+                  } catch (e) {} // Fallback gracefully if decode fails
+              }
+
+              // 2. Clean up any previously applied proxy (useful if Shaka retries the same request object)
               const proxyBases = [
                   'https://ayushproxyserver1.vercel.app/api/proxy?url=',
                   'https://ayushproxyserver2.vercel.app/api/proxy?url=',
@@ -640,16 +651,6 @@ export default function PerfectPlayerUI() {
                   if (targetUrl.startsWith(proxy)) {
                       targetUrl = targetUrl.substring(proxy.length); 
                       break;
-                  }
-              }
-
-              // 2. Extract inner slivcdn URL if wrapped in royal-firefly worker by the initial playlist
-              if (targetUrl.includes('royal-firefly-881d') && targetUrl.includes('url=')) {
-                  const innerUrlStr = targetUrl.split('url=')[1];
-                  const decodedInner = decodeURIComponent(innerUrlStr);
-                  // Only map it if it points to the slivcdn segments/manifests
-                  if (decodedInner.includes('slivcdn.com')) {
-                      targetUrl = decodedInner;
                   }
               }
 
@@ -1228,7 +1229,7 @@ export default function PerfectPlayerUI() {
                 <div className="w-12 h-12 md:w-16 md:h-16 border-[3px] border-[#0084ff]/30 border-t-[#0084ff] rounded-full animate-spin"></div>
               </div>
 
-              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP - Adjusted to sit gracefully above timeline */}
+              {/* PERFECTLY CENTERED PLAY/PAUSE/SKIP */}
               <div className={`absolute top-0 left-0 w-full h-[calc(100%-20px)] flex items-center justify-center gap-14 sm:gap-20 md:gap-24 z-40 pointer-events-none transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                 <button onClick={(e) => handleButtonSkip(true, e)} className={`outline-none transition-transform hover:scale-105 active:scale-90 flex items-center rounded-full focus-visible:ring-4 focus-visible:ring-white/50 drop-shadow-[0_2px_15px_rgba(0,0,0,0.8)] ${pointerEventsClass}`}>
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 text-white hover:text-[#0084ff] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
@@ -1249,7 +1250,7 @@ export default function PerfectPlayerUI() {
                 </button>
               </div>
 
-              {/* YOUTUBE-STYLE SETTINGS MODAL - Fixed to viewport (Z-[100]) so it never hides in portrait */}
+              {/* YOUTUBE-STYLE SETTINGS MODAL */}
               {showPlayerSettings && (
                 <div 
                   className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
@@ -1294,7 +1295,7 @@ export default function PerfectPlayerUI() {
               <div className={`absolute inset-0 flex flex-col justify-between p-4 md:p-6 z-30 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100 bg-black/50' : 'opacity-0'}`}
                    style={{ paddingTop: 'env(safe-area-inset-top, 16px)', paddingBottom: 'env(safe-area-inset-bottom, 16px)', paddingLeft: 'env(safe-area-inset-left, 16px)', paddingRight: 'env(safe-area-inset-right, 16px)' }}>
                 
-                {/* Top Bar - Adjusted to pull away from the very edges */}
+                {/* Top Bar */}
                 <div className={`flex items-center justify-between ${pointerEventsClass} w-full pt-4 pl-4`}>
                   <div className="flex items-center gap-3">
                     <button onClick={handleUiBack} className="p-1 hover:text-[#0084ff] transition active:scale-95 drop-shadow-md rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white">
