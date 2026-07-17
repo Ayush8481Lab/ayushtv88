@@ -466,7 +466,7 @@ export default function PerfectPlayerUI() {
           { name: "Dangal", url: "https://live-dangal.akamaized.net/liveabr/pub-iodang10p4al/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=300" },
           { name: "Dangal 2", url: "https://live-dangal2.akamaized.net/liveabr/pub-iodanga2a26kj2/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/Dangal2_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=50" },
           { name: "Bhojpuri Cinema", url: "https://live-bhojpuri.akamaized.net/liveabr/pub-iobhojpuqbu6yj/live_720p/chunks.m3u8", keyId: "null", key: "null", cookie: "", category: "Bhojpuri", logo: "https://dangaplay-json.s3.ap-south-1.amazonaws.com/BhojpuriCinema_1x1.jpg?bf=0&f=jpg&p=true&q=85&w=250" },
-          { name: "ARY Digital", url: "https://ayushplayarydigital.wonder945177.workers.dev/play.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Ary_Digital_Logo.png" },
+          { name: "ARY Digital", url: "https://arydigitalserver1.naturalb492.workers.dev/play.m3u8", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Ary_Digital_Logo.png" },
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
