@@ -534,49 +534,6 @@ export default function PerfectPlayerUI() {
       if (!shaka.Player.isBrowserSupported()) return;
 
       const player = new shaka.Player(videoRef.current);
-
-      // STRICT AUDIO ENFORCEMENT: Always force highest audio quality via manifest override
-      player.addEventListener('manifestparsed', (e) => {
-        try {
-          if (!e.manifest || !e.manifest.variants) return;
-          
-          const variants = e.manifest.variants;
-          const groups = new Map();
-          
-          variants.forEach(v => {
-            const vidKey = v.video ? `${v.video.width}x${v.video.height}_${v.video.bandwidth}` : 'no-video';
-            const langKey = v.language || 'unknown-lang';
-            const rolesKey = (v.audio && v.audio.roles) ? v.audio.roles.join(',') : 'no-roles';
-            const key = `${vidKey}_${langKey}_${rolesKey}`;
-            
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(v);
-          });
-
-          const optimalVariants = [];
-          groups.forEach(group => {
-            let maxAudioBw = -1;
-            group.forEach(v => {
-              const bw = (v.audio && v.audio.bandwidth) ? v.audio.bandwidth : 0;
-              if (bw > maxAudioBw) {
-                maxAudioBw = bw;
-              }
-            });
-            group.forEach(v => {
-              const bw = (v.audio && v.audio.bandwidth) ? v.audio.bandwidth : 0;
-              if (!v.audio || bw === maxAudioBw) {
-                optimalVariants.push(v);
-              }
-            });
-          });
-
-          if (optimalVariants.length > 0) {
-            e.manifest.variants = optimalVariants;
-          }
-        } catch (err) {
-          console.warn('Could not enforce strict audio quality:', err);
-        }
-      });
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
@@ -586,46 +543,51 @@ export default function PerfectPlayerUI() {
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
-      player.addEventListener('adaptation', () => {
-        const tracks = player.getVariantTracks();
-        const active = tracks.find(t => t.active);
-        if (active) {
-          if (active.height) setActiveResolution(`${active.height}p`);
-          if (active.audioBandwidth && !isUserManualAudio.current) {
-             setSelectedAudio(active.audioBandwidth);
-          }
-        }
-      });
-
       player.addEventListener('variantchanged', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active) {
-          if (active.height) setActiveResolution(`${active.height}p`);
-          if (active.audioBandwidth && !isUserManualAudio.current) {
-             setSelectedAudio(active.audioBandwidth);
-          }
+        if (active && active.height) {
+          setActiveResolution(`${active.height}p`);
         }
       });
 
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
         
+        // Setup Video Qualities
         const uniqueVideo = new Map();
         tracks.forEach(t => { if (t.height && !uniqueVideo.has(t.height)) uniqueVideo.set(t.height, t); });
         const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
         setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
 
+        // Setup Audio Qualities (OLD LOGIC RESTORED STRICTLY)
         const uniqueAudio = new Map();
         tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
         const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
         setAudioTracks(sortedAudio);
         
-        const activeTrack = tracks.find(t => t.active);
-        if (activeTrack && activeTrack.audioBandwidth && !isUserManualAudio.current) {
-          setSelectedAudio(activeTrack.audioBandwidth);
-        } else if (sortedAudio.length > 0 && !isUserManualAudio.current) {
-          setSelectedAudio(sortedAudio[0].audioBandwidth);
+        // Auto-Lock Highest Audio Logic (OLD LOGIC RESTORED STRICTLY)
+        if (sortedAudio.length > 0 && !isUserManualAudio.current) {
+          const highestAudioTrack = sortedAudio[0];
+          setSelectedAudio(highestAudioTrack.audioBandwidth);
+          
+          if (sortedAudio.length > 1) {
+            isUserManualAudio.current = true;
+            player.configure({ abr: { enabled: false } }); // Lock ABR
+            
+            const activeTrack = tracks.find(t => t.active);
+            const targetHeight = activeTrack ? activeTrack.height : (sortedVideo.length > 0 ? sortedVideo[0].height : null);
+            
+            // Try to match highest audio with active video height first
+            let targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth && t.height === targetHeight);
+            if (!targetVariant) {
+               targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth);
+            }
+            
+            if (targetVariant) {
+              player.selectVariantTrack(targetVariant, true, true);
+            }
+          }
         }
       });
 
@@ -683,17 +645,18 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
         
+        // OLD LOGIC CONFIGURATION MERGED: defaultBandwidthEstimate 10000000 to force initial high quality
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { 
-             bufferingGoal: 10,
+             bufferingGoal: 5,
              rebufferingGoal: 2,
              bufferBehind: 10
           },
           abr: { 
              enabled: true,
-             defaultBandwidthEstimate: 1500000,
+             defaultBandwidthEstimate: 10000000, 
              switchInterval: 2, 
              bandwidthDowngradeTarget: 0.85 
           }
@@ -950,43 +913,30 @@ export default function PerfectPlayerUI() {
     setShowPlayerSettings(false);
   };
 
+  // OLD LOGIC RESTORED STRICTLY FOR AUDIO CHANGE HANDLER
   const handleAudioManualChange = (e) => {
-    const val = e.target.value;
-
-    if (val === 'auto') {
-       isUserManualAudio.current = false;
-       if (!isUserManualVideo.current && playerRef.current) {
-           playerRef.current.configure({ abr: { enabled: true } });
-           setQuality('Auto');
-       }
-       if (playerRef.current) {
-           const active = playerRef.current.getVariantTracks().find(t => t.active);
-           if (active && active.audioBandwidth) setSelectedAudio(active.audioBandwidth);
-       }
-       return;
-    }
-
-    const targetBw = Number(val);
+    const targetBw = Number(e.target.value);
     setSelectedAudio(targetBw);
-    isUserManualAudio.current = true; 
+    isUserManualAudio.current = true; // Lock audio manual preference
     
     if (playerRef.current) {
+      // Disable ABR completely so it stays locked to this selected variant
       playerRef.current.configure({ abr: { enabled: false } });
+      
       const tracks = playerRef.current.getVariantTracks();
       const activeTrack = tracks.find(t => t.active);
       const targetHeight = activeTrack ? activeTrack.height : null;
       
+      // Try to match the same video resolution with the new audio track first
       let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
+      
+      // If no exact match, just get any variant with that audio bandwidth
       if (!targetTrack) {
         targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
       }
       
       if (targetTrack) {
         playerRef.current.selectVariantTrack(targetTrack, true, true);
-        if (targetTrack.height && !isUserManualVideo.current) {
-            setQuality(`${targetTrack.height}p`);
-            isUserManualVideo.current = true;
-        }
       }
     }
   };
@@ -1416,16 +1366,16 @@ export default function PerfectPlayerUI() {
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
                 
+                {/* OLD LOGIC STRICT AUDIO DROPDOWN RESTORED */}
                 {audioTracks.length > 1 && (
                   <select
                     className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-[#0084ff]"
-                    value={isUserManualAudio.current ? (selectedAudio || 'auto') : 'auto'}
+                    value={selectedAudio || ''}
                     onChange={handleAudioManualChange}
                   >
-                    <option value="auto" className="bg-[#0a182b] text-white">Audio: Auto</option>
                     {audioTracks.map(t => (
                       <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
-                        {Math.round(t.audioBandwidth / 1000)} kbps {(!isUserManualAudio.current && selectedAudio === t.audioBandwidth) ? '(Active)' : ''}
+                        Audio: {Math.round(t.audioBandwidth / 1000)} kbps
                       </option>
                     ))}
                   </select>
