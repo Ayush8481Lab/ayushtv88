@@ -220,7 +220,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
-  const sonyProxyIndexRef = useRef(0); 
+  const sonyProxyIndexRef = useRef(0);
   
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
@@ -363,7 +363,7 @@ export default function PerfectPlayerUI() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // 2. Fetch Core APIs & Sort Channels
+  // 2. Fetch Core APIs & Process Channel Ordering Flawlessly
   useEffect(() => {
     if (!isMounted || isOffline) return;
     const fetchInitialData = async () => {
@@ -459,7 +459,6 @@ export default function PerfectPlayerUI() {
           } catch (e) {}
         }
 
-        // Identify true Sony Liv channels from API
         let sonyData = [];
         if (sonyRes.status === 'fulfilled') {
           try {
@@ -486,11 +485,13 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        const rawCombined = [...premiumData, ...sonyData, ...zeeData, ...standardData, ...customChannels];
+        // By processing sonyData LAST, it natively anchors to the BOTTOM of the SonyLiv category
+        const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels, ...sonyData];
 
-        let combined = rawCombined.map(c => {
+        const combined = rawCombined.reduce((acc, c) => {
           const cid = String(c.id || c.channel_id || "");
           const cname = String(c.name || "").toLowerCase();
+          
           if (c.stream_url && !c.url) c.url = c.stream_url;
           if (c.key_id && !c.keyId) c.keyId = c.key_id;
           
@@ -502,30 +503,31 @@ export default function PerfectPlayerUI() {
             const fixedKeys = keysDict.get(cid) || keysDict.get(cname);
             if (fixedKeys) { c.keyId = fixedKeys.keyId; c.key = fixedKeys.key; }
           }
-          
-          // Logic: Move non-Premium channels with "sony" or "set hd" to SonyLiv category
-          if (c.category !== 'Premium' && !c.isNativeSonyLiv) {
-              if (cname.includes('sony') || cname.includes('set hd')) {
-                  c.category = 'SonyLiv';
-                  c.isMovedToSonyLiv = true;
-              }
-          }
-          return c;
-        }).filter(c => {
-          // Strict logic to remove junk channels titled exactly 'sony liv'
-          const cname = String(c.name || "").toLowerCase();
-          if (cname === 'sony liv' || cname.includes('sony liv')) return false;
-          return true;
-        });
 
-        // Sort: Place moved "Sony" channels at the Top, native SonyLiv API streams at Bottom
-        combined.sort((a, b) => {
-            if (a.category === 'SonyLiv' && b.category === 'SonyLiv') {
-                if (a.isMovedToSonyLiv && b.isNativeSonyLiv) return -1;
-                if (a.isNativeSonyLiv && b.isMovedToSonyLiv) return 1;
-            }
-            return 0; 
-        });
+          // Strict filter: Exclude junk standard channels named exactly or containing 'sony liv'
+          // (But allow real native ones we fetched from API)
+          if (!c.isNativeSonyLiv && (cname === 'sony liv' || cname.includes('sony liv'))) {
+             return acc;
+          }
+
+          // Push the original channel exactly where it belongs
+          acc.push({ ...c });
+
+          // COPY LOGIC: If a standard channel is Sony/SET HD, make a COPY for the SonyLiv section.
+          // Because this is processed BEFORE sonyData, these copies will sit at the TOP.
+          if (c.category !== 'Premium' && !c.isNativeSonyLiv) {
+             if (cname.includes('sony') || cname.includes('set hd')) {
+                 acc.push({ 
+                     ...c, 
+                     category: 'SonyLiv', 
+                     isCopiedToSonyLiv: true,
+                     id: c.id ? c.id + '_copy' : c.name + '_copy'
+                 });
+             }
+          }
+
+          return acc;
+        }, []);
 
         setChannels(combined);
 
@@ -555,30 +557,22 @@ export default function PerfectPlayerUI() {
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
-        
-        // Auto Rotate Proxy for SonyLiv on network error
         if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
-        
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
-      // Maintain Accurate Active Auto Quality 
       player.addEventListener('adaptation', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active && active.height) {
-          setActiveResolution(`${active.height}p`);
-        }
+        if (active && active.height) setActiveResolution(`${active.height}p`);
       });
 
       player.addEventListener('variantchanged', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active && active.height) {
-          setActiveResolution(`${active.height}p`);
-        }
+        if (active && active.height) setActiveResolution(`${active.height}p`);
       });
 
       player.addEventListener('trackschanged', () => {
@@ -595,32 +589,30 @@ export default function PerfectPlayerUI() {
         setAudioTracks(sortedAudio);
         
         if (sortedAudio.length > 0 && !isUserManualAudio.current) {
-          const highestAudioTrack = sortedAudio[0];
-          setSelectedAudio(highestAudioTrack.audioBandwidth);
-          
-          if (sortedAudio.length > 1) {
-             // Let Auto ABR manage itself natively without locking
-          }
+          setSelectedAudio(sortedAudio[0].audioBandwidth);
         }
       });
 
-      // ONLY NEEDED FOR JIO TOKENS
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
-        const currentCh = activeChannelRef.current;
-        if (!currentCh || !currentCh.url) return;
-        let uri = request.uris[0];
-
-        if (currentCh.url.includes('__hdnea__=')) {
-            const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
-            if (tokenMatch && !uri.includes('__hdnea__=')) {
-                request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
-            }
-            return; 
-        }
-        const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
-        if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-           const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-           request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
+        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+        if (isManifest || isSegment) {
+          const currentCh = activeChannelRef.current;
+          if (!currentCh || !currentCh.url) return;
+          let uri = request.uris[0];
+          
+          if (currentCh.url.includes('__hdnea__=')) {
+              const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
+              if (tokenMatch && !uri.includes('__hdnea__=')) {
+                  request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
+              }
+              return; 
+          }
+          const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
+          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+             request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
+          }
         }
       });
 
@@ -655,34 +647,26 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
         
-        // Medium Quality Initial Buffering Strategy (Starts at 1.5 Mbps instead of 10 Mbps)
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 },
-          abr: { defaultBandwidthEstimate: 1500000, enabled: true }
+          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Medium start buffer logic
         });
 
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
 
-        // ==========================================
-        // SONYLIV PERFECT MASTER PLAYLIST REWRITE
-        // ==========================================
         if (activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv) {
             const activeProxyBase = SONY_PROXIES[sonyProxyIndexRef.current];
-            
-            // Fetch the royal-firefly master data
             const response = await fetch(finalUrl);
             if (!response.ok) throw new Error("Failed to fetch proxy master");
             const originalText = await response.text();
             
-            // Rewrite exactly as requested using raw encoded URLs provided by royal-firefly API
             const rewrittenText = originalText.replace(/https:\/\/royal-firefly[^\s"']*\?url=([^\s"']+)/g, (match, urlParam) => {
                 return activeProxyBase + urlParam;
             });
 
-            // Hand the rewritten blob to Shaka Player directly
             const blob = new Blob([rewrittenText], { type: 'application/x-mpegURL' });
             finalUrl = URL.createObjectURL(blob);
             forceMimeType = 'application/x-mpegURL';
@@ -890,7 +874,6 @@ export default function PerfectPlayerUI() {
 
   const selectQuality = (item) => {
     if (!playerRef.current) return;
-    
     if (item.index === -1) {
       isUserManualVideo.current = false;
       playerRef.current.configure({ abr: { enabled: true } });
@@ -970,9 +953,18 @@ export default function PerfectPlayerUI() {
     return channels.filter(c => {
       if (!c.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       const cCat = c.category || c.group || c.group_title || 'Others';
-      if (activeCategory === 'All') return true;
-      if (activeCategory === 'Favorites') return favorites.includes(c.name);
+      
+      // Stop rendering duplicate copies in the global All, Favorites & Sports view
+      if (activeCategory === 'All') {
+         if (c.isCopiedToSonyLiv) return false;
+         return true;
+      }
+      if (activeCategory === 'Favorites') {
+         if (c.isCopiedToSonyLiv) return false;
+         return favorites.includes(c.name);
+      }
       if (activeCategory === 'Sports') return cCat === 'Sports' || (cCat === 'Premium' && /sport/i.test(c.name));
+      
       return cCat === activeCategory;
     });
   }, [channels, activeCategory, searchQuery, favorites]);
@@ -1036,7 +1028,6 @@ export default function PerfectPlayerUI() {
         .dly-1 { animation-delay: 0.1s; }
         .dly-2 { animation-delay: 0.2s; }
         
-        /* Premium Bottom Sheet / Modal Animations */
         @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .yt-modal-mobile { animation: popUpModalMobile 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
