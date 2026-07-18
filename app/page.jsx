@@ -53,7 +53,7 @@ const setCachedLogo = async (url, blob) => {
 };
 
 // ==========================================
-// ORIGINAL LIGHTNING-FAST CARD COMPONENT
+// OPTIMIZED CARD COMPONENT (With IDB Caching)
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   const [loaded, setLoaded] = useState(false);
@@ -84,16 +84,13 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
     <button
       onClick={() => onClick(channel)}
       title={channel.name}
-      className={`relative w-full aspect-square bg-[#0a182b]/50 rounded-xl p-2 md:p-3 flex items-center justify-center 
+      className={`relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
         transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 focus:outline-none focus-visible:scale-105 focus-visible:ring-4 focus-visible:ring-[#0084ff]
-        ${isActive ? 'bg-white ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)]' : 'border border-blue-400/5 shadow-sm bg-white hover:opacity-100'}`}
+        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)]' : 'border border-gray-200 shadow-sm opacity-95 hover:opacity-100'}`}
     >
       {(!loaded || error) && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-2 z-0">
-          {!loaded && !error && <div className="w-8 h-8 rounded-full bg-blue-400/10 animate-pulse mb-2" />}
-          <span className={`text-[10px] md:text-xs font-bold text-center uppercase tracking-wider leading-tight z-10 drop-shadow-md ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>
-            {channel.name}
-          </span>
+        <div className="absolute inset-0 flex items-center justify-center p-2">
+          <span className="text-[10px] md:text-xs font-bold text-gray-500 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
         </div>
       )}
       {imgSrc && (
@@ -105,7 +102,7 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
           decoding="async"
           onLoad={() => setLoaded(true)}
           onError={() => setError(true)}
-          className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 z-10 relative ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
+          className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
     </button>
@@ -223,7 +220,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
-  const sonyProxyIndexRef = useRef(0); 
+  const sonyProxyIndexRef = useRef(0);
   
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
@@ -488,7 +485,7 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // Process data in proper order
+        // By processing sonyData LAST, it natively anchors to the BOTTOM of the SonyLiv category
         const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels, ...sonyData];
 
         const combined = rawCombined.reduce((acc, c) => {
@@ -508,6 +505,7 @@ export default function PerfectPlayerUI() {
           }
 
           // Strict filter: Exclude junk standard channels named exactly or containing 'sony liv'
+          // (But allow real native ones we fetched from API)
           if (!c.isNativeSonyLiv && (cname === 'sony liv' || cname.includes('sony liv'))) {
              return acc;
           }
@@ -531,15 +529,6 @@ export default function PerfectPlayerUI() {
           return acc;
         }, []);
 
-        // Final sorting for SonyLiv strictly pinning copies to top
-        combined.sort((a, b) => {
-            if (a.category === 'SonyLiv' && b.category === 'SonyLiv') {
-                if (a.isCopiedToSonyLiv && b.isNativeSonyLiv) return -1;
-                if (a.isNativeSonyLiv && b.isCopiedToSonyLiv) return 1;
-            }
-            return 0;
-        });
-
         setChannels(combined);
 
         const allCats = combined.map(c => c.category || c.group || c.group_title || 'Others');
@@ -555,7 +544,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION (PERFECT AUDIO LOCK)
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -600,21 +589,10 @@ export default function PerfectPlayerUI() {
         setAudioTracks(sortedAudio);
         
         if (sortedAudio.length > 0 && !isUserManualAudio.current) {
-          const highestAudioBandwidth = sortedAudio[0].audioBandwidth;
-          setSelectedAudio(highestAudioBandwidth);
-          
-          // STRICT ABR AUDIO RESTRICTION: Mathematically forces highest audio while video seamlessly auto-scales!
-          player.configure({
-            abr: {
-              restrictions: {
-                minAudioBandwidth: highestAudioBandwidth
-              }
-            }
-          });
+          setSelectedAudio(sortedAudio[0].audioBandwidth);
         }
       });
 
-      // ONLY NEEDED FOR JIO TOKENS
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -622,6 +600,7 @@ export default function PerfectPlayerUI() {
           const currentCh = activeChannelRef.current;
           if (!currentCh || !currentCh.url) return;
           let uri = request.uris[0];
+          
           if (currentCh.url.includes('__hdnea__=')) {
               const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
               if (tokenMatch && !uri.includes('__hdnea__=')) {
@@ -672,15 +651,12 @@ export default function PerfectPlayerUI() {
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 },
-          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Buffer at Medium Quality First
+          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Medium start buffer logic
         });
 
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
 
-        // ==========================================
-        // SONYLIV PERFECT MASTER PLAYLIST REWRITE
-        // ==========================================
         if (activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv) {
             const activeProxyBase = SONY_PROXIES[sonyProxyIndexRef.current];
             const response = await fetch(finalUrl);
@@ -898,33 +874,23 @@ export default function PerfectPlayerUI() {
 
   const selectQuality = (item) => {
     if (!playerRef.current) return;
-
     if (item.index === -1) {
       isUserManualVideo.current = false;
-      // When back to auto, ensure audio restrictor is still enforcing the highest audio available!
-      const targetAudio = selectedAudio;
-      playerRef.current.configure({ 
-         abr: { 
-           enabled: true,
-           restrictions: { minAudioBandwidth: targetAudio }
-         } 
-      });
+      playerRef.current.configure({ abr: { enabled: true } });
       setQuality('Auto');
     } else {
       isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
       
-      // STRICT LOGIC: Force highest audio track for the specifically chosen video height!
+      // Strict Logic: Maintain Highest Audio bandwidth for the manually selected video height
       const tracks = playerRef.current.getVariantTracks();
       const sameHeightTracks = tracks.filter(t => t.height === item.track.height);
-      const highestAudioForHeight = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
-      
-      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudioForHeight);
+      const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
+      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
       if (!bestVariant) bestVariant = item.track;
       
       playerRef.current.selectVariantTrack(bestVariant, true, false);
       setQuality(item.name);
-      setSelectedAudio(bestVariant.audioBandwidth);
     }
     setShowPlayerSettings(false);
   };
@@ -935,26 +901,18 @@ export default function PerfectPlayerUI() {
     isUserManualAudio.current = true; 
     
     if (playerRef.current) {
-      if (quality === 'Auto') {
-         // Auto Video + Manual Audio
-         playerRef.current.configure({ 
-            abr: { 
-              restrictions: { minAudioBandwidth: targetBw, maxAudioBandwidth: targetBw }
-            } 
-         });
-      } else {
-         // Manual Video + Manual Audio
-         const tracks = playerRef.current.getVariantTracks();
-         const activeTrack = tracks.find(t => t.active);
-         const targetHeight = activeTrack ? activeTrack.height : null;
-         
-         let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
-         if (!targetTrack) targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
-         
-         if (targetTrack) {
-           playerRef.current.configure({ abr: { enabled: false } });
-           playerRef.current.selectVariantTrack(targetTrack, true, true);
-         }
+      playerRef.current.configure({ abr: { enabled: false } });
+      const tracks = playerRef.current.getVariantTracks();
+      const activeTrack = tracks.find(t => t.active);
+      const targetHeight = activeTrack ? activeTrack.height : null;
+      
+      let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
+      if (!targetTrack) {
+        targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
+      }
+      
+      if (targetTrack) {
+        playerRef.current.selectVariantTrack(targetTrack, true, true);
       }
     }
   };
@@ -1063,10 +1021,6 @@ export default function PerfectPlayerUI() {
         input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.3); }
         input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #0084ff; cursor: pointer; border: none; transition: transform 0.1s ease; }
         input[type="range"]::-moz-range-thumb:hover { transform: scale(1.3); }
-        
-        @keyframes shimmer { 100% { transform: translateX(100%); } }
-        .animate-shimmer { animation: shimmer 1.5s infinite; }
-        
         @keyframes fadeSlideRight { 0% { opacity: 0.2; transform: translateX(-2px); } 50% { opacity: 1; transform: translateX(2px); } 100% { opacity: 0.2; transform: translateX(-2px); } }
         @keyframes fadeSlideLeft { 0% { opacity: 0.2; transform: translateX(2px); } 50% { opacity: 1; transform: translateX(-2px); } 100% { opacity: 0.2; transform: translateX(2px); } }
         .anim-arr-r { animation: fadeSlideRight 0.6s ease-in-out infinite; }
@@ -1125,15 +1079,9 @@ export default function PerfectPlayerUI() {
 
         <div className="flex-1 overflow-y-auto no-scrollbar scroll-smooth overscroll-none p-3 md:p-4">
           {isLoading ? (
-            <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3 p-1">
-              {Array.from({ length: 24 }).map((_, idx) => (
-                <div key={idx} className="relative w-full aspect-square bg-[#0d1b2a]/50 rounded-xl overflow-hidden shadow-sm border border-blue-400/5">
-                  <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-blue-400/10 to-transparent" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-12 h-12 rounded-full bg-blue-900/20" />
-                  </div>
-                </div>
-              ))}
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
+              <Loader2 className="animate-spin text-[#0084ff]" size={36} />
+              <p className="tracking-widest text-xs font-semibold uppercase">Connecting to Live8481</p>
             </div>
           ) : (
             <>
