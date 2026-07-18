@@ -378,7 +378,7 @@ export default function PerfectPlayerUI() {
           fetch(`https://raw.githubusercontent.com/live4wap/links/refs/heads/main/jiomb?t=${ts}`),
           fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/jtv-fetch/jstarcookie/cookie.json?t=${ts}`),
           fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/zee5/channels199.json?t=${ts}`),
-          fetch(`https://allinonereborn2.online/sony/sliv3.json?t=${ts}`)
+          fetch(`https://tv.wapgotube.workers.dev/proxy/https://allinonereborn2.online/sony/sliv3.json?t=${ts}`)
         ]);
 
         if (tokenRes.status === 'fulfilled') {
