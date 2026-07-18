@@ -524,7 +524,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION (WITH STRICT HIGHEST AUDIO LOCK PATCH)
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -535,8 +535,41 @@ export default function PerfectPlayerUI() {
 
       const player = new shaka.Player(videoRef.current);
       
+      // =========================================================================
+      // STRICT HIGHEST AUDIO LOCK: Monkey-patch ABR Manager to completely hide 
+      // lower quality audio tracks from Shaka. Video still adapts freely on Auto!
+      // =========================================================================
+      try {
+          const abrManager = player.getAbrManager();
+          if (abrManager && typeof abrManager.setVariants === 'function') {
+              const originalSetVariants = abrManager.setVariants.bind(abrManager);
+              abrManager.setVariants = function(variants) {
+                  try {
+                      let maxAudioBw = 0;
+                      // Step 1: Find the absolute highest audio bandwidth available
+                      variants.forEach(v => {
+                          if (v.audio && v.audio.bandwidth && v.audio.bandwidth > maxAudioBw) {
+                              maxAudioBw = v.audio.bandwidth;
+                          }
+                      });
+                      
+                      // Step 2: Filter variants to strictly allow ONLY the max audio variants
+                      // (If stream has no audio bandwidth data at all, pass it through untouched)
+                      const filtered = variants.filter(v => {
+                          return !v.audio || !v.audio.bandwidth || v.audio.bandwidth === maxAudioBw;
+                      });
+                      
+                      originalSetVariants(filtered.length > 0 ? filtered : variants);
+                  } catch (err) {
+                      originalSetVariants(variants);
+                  }
+              };
+          }
+      } catch (e) {
+          console.error("Failed to apply strict audio lock", e);
+      }
+      
       player.addEventListener('error', (e) => {
-        console.error('Shaka Player Error', e.detail);
         if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
@@ -651,7 +684,7 @@ export default function PerfectPlayerUI() {
           abr: { 
              enabled: true,
              defaultBandwidthEstimate: 1500000,
-             switchInterval: 2, 
+             switchInterval: 1, // Ultra aggressive switching interval so it downgrades video instantly on lag
              bandwidthDowngradeTarget: 0.85 
           }
         });
@@ -878,7 +911,7 @@ export default function PerfectPlayerUI() {
     if (!playerRef.current) return;
     if (item.index === -1) {
       isUserManualVideo.current = false;
-      isUserManualAudio.current = false; // Restore complete auto functionality naturally 
+      isUserManualAudio.current = false; 
       playerRef.current.configure({ abr: { enabled: true } });
       setQuality('Auto');
       
@@ -895,6 +928,8 @@ export default function PerfectPlayerUI() {
       if (isUserManualAudio.current && selectedAudio) {
          bestVariant = sameHeightTracks.find(t => t.audioBandwidth === selectedAudio);
       }
+      
+      // Strictly force highest audio track natively upon manual video quality selection
       if (!bestVariant) {
          const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
          bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
