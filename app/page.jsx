@@ -349,21 +349,7 @@ export default function PerfectPlayerUI() {
     return () => window.removeEventListener('orientationchange', handleOrientationChange);
   }, []);
 
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'hidden' && activeChannelRef.current && videoRef.current) {
-        try {
-          if (!videoRef.current.paused && document.pictureInPictureElement !== videoRef.current) {
-            await videoRef.current.requestPictureInPicture();
-          }
-        } catch (error) {}
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
-  // 2. Fetch Core APIs & Process Channel Ordering Flawlessly
+  // 2. Fetch Core APIs
   useEffect(() => {
     if (!isMounted || isOffline) return;
     const fetchInitialData = async () => {
@@ -485,7 +471,6 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // By processing sonyData LAST, it natively anchors to the BOTTOM of the SonyLiv category
         const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels, ...sonyData];
 
         const combined = rawCombined.reduce((acc, c) => {
@@ -504,17 +489,12 @@ export default function PerfectPlayerUI() {
             if (fixedKeys) { c.keyId = fixedKeys.keyId; c.key = fixedKeys.key; }
           }
 
-          // Strict filter: Exclude junk standard channels named exactly or containing 'sony liv'
-          // (But allow real native ones we fetched from API)
           if (!c.isNativeSonyLiv && (cname === 'sony liv' || cname.includes('sony liv'))) {
              return acc;
           }
 
-          // Push the original channel exactly where it belongs
           acc.push({ ...c });
 
-          // COPY LOGIC: If a standard channel is Sony/SET HD, make a COPY for the SonyLiv section.
-          // Because this is processed BEFORE sonyData, these copies will sit at the TOP.
           if (c.category !== 'Premium' && !c.isNativeSonyLiv) {
              if (cname.includes('sony') || cname.includes('set hd')) {
                  acc.push({ 
@@ -566,13 +546,23 @@ export default function PerfectPlayerUI() {
       player.addEventListener('adaptation', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active && active.height) setActiveResolution(`${active.height}p`);
+        if (active) {
+          if (active.height) setActiveResolution(`${active.height}p`);
+          if (active.audioBandwidth && !isUserManualAudio.current) {
+             setSelectedAudio(active.audioBandwidth);
+          }
+        }
       });
 
       player.addEventListener('variantchanged', () => {
         const tracks = player.getVariantTracks();
         const active = tracks.find(t => t.active);
-        if (active && active.height) setActiveResolution(`${active.height}p`);
+        if (active) {
+          if (active.height) setActiveResolution(`${active.height}p`);
+          if (active.audioBandwidth && !isUserManualAudio.current) {
+             setSelectedAudio(active.audioBandwidth);
+          }
+        }
       });
 
       player.addEventListener('trackschanged', () => {
@@ -588,7 +578,10 @@ export default function PerfectPlayerUI() {
         const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
         setAudioTracks(sortedAudio);
         
-        if (sortedAudio.length > 0 && !isUserManualAudio.current) {
+        const activeTrack = tracks.find(t => t.active);
+        if (activeTrack && activeTrack.audioBandwidth && !isUserManualAudio.current) {
+          setSelectedAudio(activeTrack.audioBandwidth);
+        } else if (sortedAudio.length > 0 && !isUserManualAudio.current) {
           setSelectedAudio(sortedAudio[0].audioBandwidth);
         }
       });
@@ -622,7 +615,7 @@ export default function PerfectPlayerUI() {
     return () => { if (playerRef.current) playerRef.current.destroy(); };
   }, [isMounted, isOffline]);
 
-  // 4. INSTANT PLAYBACK ENGINE
+  // 4. INSTANT PLAYBACK ENGINE & AGGRESSIVE ADAPTIVE BANDWIDTH
   useEffect(() => {
     if (!playerRef.current) return;
     if (!activeChannel) {
@@ -650,8 +643,17 @@ export default function PerfectPlayerUI() {
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
-          streaming: { bufferingGoal: 5 },
-          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Medium start buffer logic
+          streaming: { 
+             bufferingGoal: 10,
+             rebufferingGoal: 2,
+             bufferBehind: 10
+          },
+          abr: { 
+             enabled: true,
+             defaultBandwidthEstimate: 1500000,
+             switchInterval: 2, 
+             bandwidthDowngradeTarget: 0.85 
+          }
         });
 
         let finalUrl = activeChannel.url;
@@ -876,17 +878,27 @@ export default function PerfectPlayerUI() {
     if (!playerRef.current) return;
     if (item.index === -1) {
       isUserManualVideo.current = false;
+      isUserManualAudio.current = false; // Restore complete auto functionality naturally 
       playerRef.current.configure({ abr: { enabled: true } });
       setQuality('Auto');
+      
+      const active = playerRef.current.getVariantTracks().find(t => t.active);
+      if (active && active.audioBandwidth) setSelectedAudio(active.audioBandwidth);
     } else {
       isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
       
-      // Strict Logic: Maintain Highest Audio bandwidth for the manually selected video height
       const tracks = playerRef.current.getVariantTracks();
       const sameHeightTracks = tracks.filter(t => t.height === item.track.height);
-      const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
-      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
+      
+      let bestVariant;
+      if (isUserManualAudio.current && selectedAudio) {
+         bestVariant = sameHeightTracks.find(t => t.audioBandwidth === selectedAudio);
+      }
+      if (!bestVariant) {
+         const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
+         bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
+      }
       if (!bestVariant) bestVariant = item.track;
       
       playerRef.current.selectVariantTrack(bestVariant, true, false);
@@ -896,7 +908,22 @@ export default function PerfectPlayerUI() {
   };
 
   const handleAudioManualChange = (e) => {
-    const targetBw = Number(e.target.value);
+    const val = e.target.value;
+
+    if (val === 'auto') {
+       isUserManualAudio.current = false;
+       if (!isUserManualVideo.current && playerRef.current) {
+           playerRef.current.configure({ abr: { enabled: true } });
+           setQuality('Auto');
+       }
+       if (playerRef.current) {
+           const active = playerRef.current.getVariantTracks().find(t => t.active);
+           if (active && active.audioBandwidth) setSelectedAudio(active.audioBandwidth);
+       }
+       return;
+    }
+
+    const targetBw = Number(val);
     setSelectedAudio(targetBw);
     isUserManualAudio.current = true; 
     
@@ -913,6 +940,10 @@ export default function PerfectPlayerUI() {
       
       if (targetTrack) {
         playerRef.current.selectVariantTrack(targetTrack, true, true);
+        if (targetTrack.height && !isUserManualVideo.current) {
+            setQuality(`${targetTrack.height}p`);
+            isUserManualVideo.current = true;
+        }
       }
     }
   };
@@ -954,7 +985,6 @@ export default function PerfectPlayerUI() {
       if (!c.name?.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       const cCat = c.category || c.group || c.group_title || 'Others';
       
-      // Stop rendering duplicate copies in the global All, Favorites & Sports view
       if (activeCategory === 'All') {
          if (c.isCopiedToSonyLiv) return false;
          return true;
@@ -1346,12 +1376,13 @@ export default function PerfectPlayerUI() {
                 {audioTracks.length > 1 && (
                   <select
                     className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-[#0084ff]"
-                    value={selectedAudio || ''}
+                    value={isUserManualAudio.current ? (selectedAudio || 'auto') : 'auto'}
                     onChange={handleAudioManualChange}
                   >
+                    <option value="auto" className="bg-[#0a182b] text-white">Audio: Auto</option>
                     {audioTracks.map(t => (
                       <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
-                        Audio: {Math.round(t.audioBandwidth / 1000)} kbps
+                        {Math.round(t.audioBandwidth / 1000)} kbps {(!isUserManualAudio.current && selectedAudio === t.audioBandwidth) ? '(Active)' : ''}
                       </option>
                     ))}
                   </select>
