@@ -222,6 +222,7 @@ export default function PerfectPlayerUI() {
   const showPlayerSettingsRef = useRef(false);
   const sonyProxyIndexRef = useRef(0);
   
+  const initialVideoLocked = useRef(false);
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
   
@@ -560,34 +561,57 @@ export default function PerfectPlayerUI() {
         const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
         setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
 
-        // Setup Audio Qualities (OLD LOGIC RESTORED STRICTLY)
+        // Setup Audio Qualities
         const uniqueAudio = new Map();
         tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
         const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
         setAudioTracks(sortedAudio);
+
+        let targetVideoHeight = null;
+        let trackLocked = false;
         
-        // Auto-Lock Highest Audio Logic (OLD LOGIC RESTORED STRICTLY)
+        // 1. Initial Strict Video Lock (Between 200p and 600p) - "change only when user click"
+        if (!initialVideoLocked.current && sortedVideo.length > 0 && !isUserManualVideo.current) {
+           const midTracks = sortedVideo.filter(t => t.height >= 200 && t.height <= 600);
+           const defaultVideoTrack = midTracks.length > 0 ? midTracks[0] : sortedVideo[sortedVideo.length - 1];
+           targetVideoHeight = defaultVideoTrack.height;
+           setQuality(`${targetVideoHeight}p`);
+           isUserManualVideo.current = true; // Act as if it was a manual click lock
+           initialVideoLocked.current = true;
+           trackLocked = true;
+        }
+
+        // 2. Highest Audio Selection Logic (Preserved Strictly)
+        let targetAudioBandwidth = selectedAudio;
         if (sortedAudio.length > 0 && !isUserManualAudio.current) {
-          const highestAudioTrack = sortedAudio[0];
-          setSelectedAudio(highestAudioTrack.audioBandwidth);
-          
+          targetAudioBandwidth = sortedAudio[0].audioBandwidth;
+          setSelectedAudio(targetAudioBandwidth);
           if (sortedAudio.length > 1) {
-            isUserManualAudio.current = true;
-            player.configure({ abr: { enabled: false } }); // Lock ABR
-            
-            const activeTrack = tracks.find(t => t.active);
-            const targetHeight = activeTrack ? activeTrack.height : (sortedVideo.length > 0 ? sortedVideo[0].height : null);
-            
-            // Try to match highest audio with active video height first
-            let targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth && t.height === targetHeight);
-            if (!targetVariant) {
-               targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth);
-            }
-            
-            if (targetVariant) {
-              player.selectVariantTrack(targetVariant, true, true);
-            }
+              isUserManualAudio.current = true;
+              trackLocked = true;
           }
+        }
+
+        // Apply Final Variant Selection (Combines both lock constraints)
+        if (trackLocked) {
+           player.configure({ abr: { enabled: false } }); // Lock ABR
+
+           const activeTrack = tracks.find(t => t.active);
+           const fallbackHeight = sortedVideo.length > 0 ? sortedVideo[0].height : null;
+           const finalTargetHeight = targetVideoHeight || (activeTrack ? activeTrack.height : fallbackHeight);
+           
+           let targetVariant = tracks.find(t => t.audioBandwidth === targetAudioBandwidth && t.height === finalTargetHeight);
+           
+           if (!targetVariant) {
+               targetVariant = tracks.find(t => t.height === finalTargetHeight); 
+           }
+           if (!targetVariant) {
+               targetVariant = tracks.find(t => t.audioBandwidth === targetAudioBandwidth);
+           }
+           
+           if (targetVariant) {
+              player.selectVariantTrack(targetVariant, true, true);
+           }
         }
       });
 
@@ -630,6 +654,7 @@ export default function PerfectPlayerUI() {
       setIsLiveStream(false);
       isUserManualAudio.current = false; 
       isUserManualVideo.current = false;
+      initialVideoLocked.current = false;
       return;
     }
     const loadStream = async () => {
@@ -638,27 +663,33 @@ export default function PerfectPlayerUI() {
         setIsBuffering(true);
         isUserManualVideo.current = false; 
         isUserManualAudio.current = false;
+        initialVideoLocked.current = false;
         setQuality('Auto');
         
         let drmConfig = { clearKeys: {} };
         if (activeChannel.keyId && activeChannel.key && activeChannel.keyId !== "null" && activeChannel.key !== "null") {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
+
+        const isVercelProxy = activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv;
+        const preloadLatency = isVercelProxy ? 6 : 4; // Ensures latency specifications
         
-        // OLD LOGIC CONFIGURATION MERGED: defaultBandwidthEstimate 10000000 to force initial high quality
+        // UPGRADED SMOOTH PLAYBACK & SUPERFAST START CONFIGURATION
         playerRef.current.configure({
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { 
-             bufferingGoal: 5,
-             rebufferingGoal: 2,
-             bufferBehind: 10
+             bufferingGoal: preloadLatency, // Keeps requested latency margin
+             rebufferingGoal: 0.2, // Instantly superfast start like channel changing (Eliminates 3-8s delay)
+             bufferBehind: 10,
+             safeMarginSwitchOffset: 1 // Smooth downgrade transitions
           },
           abr: { 
-             enabled: true,
-             defaultBandwidthEstimate: 10000000, 
-             switchInterval: 2, 
-             bandwidthDowngradeTarget: 0.85 
+             enabled: true, 
+             defaultBandwidthEstimate: 800000, // Pre-requests a 360/480p chunk to avoid initial high-res network freeze
+             switchInterval: 1, // Rapid re-evaluation to detect buffering early
+             bandwidthDowngradeTarget: 0.95, // Aggressively drop resolution if network struggles
+             bandwidthUpgradeTarget: 0.70 // Carefully upgrade to avoid re-buffering
           }
         });
 
