@@ -220,7 +220,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
-  const sonyProxyIndexRef = useRef(0); // Tracks current fallback proxy
+  const sonyProxyIndexRef = useRef(0); // For handling Sony proxy rotating limits
   
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
@@ -295,10 +295,17 @@ export default function PerfectPlayerUI() {
 
       if (activeChannelRef.current && !showPlayerSettingsRef.current && !isInput) {
         const isButton = e.target.tagName === 'BUTTON';
+
         if (e.key === 'ArrowLeft' || e.key === 'MediaRewind') {
-          if (!isButton) { e.preventDefault(); handleButtonSkip(true, null); }
+          if (!isButton) {
+            e.preventDefault();
+            handleButtonSkip(true, null);
+          }
         } else if (e.key === 'ArrowRight' || e.key === 'MediaFastForward') {
-          if (!isButton) { e.preventDefault(); handleButtonSkip(false, null); }
+          if (!isButton) {
+            e.preventDefault();
+            handleButtonSkip(false, null);
+          }
         } else if (e.key === ' ' || e.key === 'Enter') {
           if (!isButton) {
             e.preventDefault();
@@ -313,6 +320,7 @@ export default function PerfectPlayerUI() {
         }
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
@@ -326,6 +334,7 @@ export default function PerfectPlayerUI() {
   useEffect(() => {
     const handleOrientationChange = () => {
       if (!activeChannelRef.current || !containerRef.current) return;
+      
       const checkOrientation = () => {
         const isLandscape = window.matchMedia("(orientation: landscape)").matches;
         if (isLandscape && !document.fullscreenElement) {
@@ -342,9 +351,11 @@ export default function PerfectPlayerUI() {
            }
         }
       };
+
       setTimeout(checkOrientation, 300);
       setTimeout(checkOrientation, 800);
     };
+
     window.addEventListener('orientationchange', handleOrientationChange);
     return () => window.removeEventListener('orientationchange', handleOrientationChange);
   }, []);
@@ -484,7 +495,7 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        const rawCombined = [...premiumData, ...sonyData, ...zeeData, ...standardData, ...customChannels];
+        const rawCombined = [...premiumData, ...zeeData, ...sonyData, ...standardData, ...customChannels];
 
         const combined = rawCombined.map(c => {
           const cid = String(c.id || c.channel_id || "");
@@ -516,7 +527,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION (Perfected proxy removal)
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -530,7 +541,7 @@ export default function PerfectPlayerUI() {
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
         
-        // Auto Rotate Sony Proxy on Error
+        // Auto Rotate Proxy for SonyLiv on network error
         if (activeChannelRef.current?.category === 'SonyLiv') {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
@@ -566,12 +577,15 @@ export default function PerfectPlayerUI() {
           if (sortedAudio.length > 1) {
             isUserManualAudio.current = true;
             player.configure({ abr: { enabled: false } });
+            
             const activeTrack = tracks.find(t => t.active);
             const targetHeight = activeTrack ? activeTrack.height : (sortedVideo.length > 0 ? sortedVideo[0].height : null);
+            
             let targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth && t.height === targetHeight);
             if (!targetVariant) {
                targetVariant = tracks.find(t => t.audioBandwidth === highestAudioTrack.audioBandwidth);
             }
+            
             if (targetVariant) {
               player.selectVariantTrack(targetVariant, true, true);
             }
@@ -579,97 +593,27 @@ export default function PerfectPlayerUI() {
         }
       });
 
-      // ==========================================
-      // REQUEST FILTER (Wraps absolute URLs in Proxy)
-      // ==========================================
+      // ORIGINAL UNTOUCHED REQUEST FILTER FOR JIO ONLY
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
-        const currentCh = activeChannelRef.current;
-        if (!currentCh || !currentCh.url) return;
-        let uri = request.uris[0];
-
-        // SONYLIV LOGIC
-        if (currentCh.category === 'SonyLiv') {
-            const isProxied = SONY_PROXIES.some(proxy => uri.startsWith(proxy));
-            
-            // Only wrap raw slivcdn requests (which were generated by our Response Filter for .ts segments)
-            if (!isProxied && uri.includes('slivcdn.com')) {
-                const activeProxyUrl = SONY_PROXIES[sonyProxyIndexRef.current];
-                // Properly encode the absolute URI before appending it
-                request.uris[0] = activeProxyUrl + encodeURIComponent(uri);
-                return;
-            }
-        }
-
-        // DEFAULT JIO TOKEN LOGIC
-        if (currentCh.url.includes('__hdnea__=')) {
-            const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
-            if (tokenMatch && !uri.includes('__hdnea__=')) {
-                request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
-            }
-            return; 
-        }
-        const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
-        if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
-           const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
-           request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
-        }
-      });
-
-      // ==========================================
-      // RESPONSE FILTER (Fixes Relative Segment Paths)
-      // ==========================================
-      player.getNetworkingEngine().registerResponseFilter((type, response) => {
+        const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
+        const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
+        if (isManifest || isSegment) {
           const currentCh = activeChannelRef.current;
-          if (!currentCh || currentCh.category !== 'SonyLiv') return;
-
-          // Only process Manifest/Playlist files
-          if (type === shaka.net.NetworkingEngine.RequestType.MANIFEST) {
-              const text = new TextDecoder().decode(response.data);
-              if (!text.startsWith('#EXTM3U')) return;
-
-              // Extract the REAL absolute base URL from the proxy wrapper to resolve segments correctly
-              let realBaseUrl = response.uri;
-              if (realBaseUrl.includes('/api/proxy?url=')) {
-                  try {
-                      const extracted = realBaseUrl.split('/api/proxy?url=')[1];
-                      realBaseUrl = decodeURIComponent(extracted);
-                  } catch (e) {}
+          if (!currentCh || !currentCh.url) return;
+          let uri = request.uris[0];
+          if (currentCh.url.includes('__hdnea__=')) {
+              const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
+              if (tokenMatch && !uri.includes('__hdnea__=')) {
+                  request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + tokenMatch[1];
               }
-
-              const lines = text.split('\n');
-              let modified = false;
-
-              for (let i = 0; i < lines.length; i++) {
-                  const line = lines[i].trim();
-                  if (!line) continue;
-
-                  if (line.startsWith('#')) {
-                      if (line.startsWith('#EXT-X-KEY:')) {
-                          const match = line.match(/URI="([^"]+)"/);
-                          if (match && !match[1].startsWith('http')) {
-                              try {
-                                  const absKey = new URL(match[1], realBaseUrl).href;
-                                  lines[i] = line.replace(match[1], absKey);
-                                  modified = true;
-                              } catch(e){}
-                          }
-                      }
-                      continue;
-                  }
-
-                  // Make relative segments absolute using the real underlying domain
-                  if (!line.startsWith('http')) {
-                      try {
-                          lines[i] = new URL(line, realBaseUrl).href;
-                          modified = true;
-                      } catch (e) {}
-                  }
-              }
-
-              if (modified) {
-                  response.data = new TextEncoder().encode(lines.join('\n'));
-              }
+              return; 
           }
+          const currentToken = currentCh.cookie ? currentCh.cookie : tokenRef.current;
+          if (currentToken && uri.includes('.jio.com') && !uri.includes('st=') && !uri.includes('hdnea')) {
+             const cleanToken = currentToken.startsWith('?') ? currentToken.substring(1) : currentToken;
+             request.uris[0] = uri + (uri.includes('?') ? '&' : '?') + cleanToken;
+          }
+        }
       });
 
       playerRef.current = player;
@@ -714,23 +658,23 @@ export default function PerfectPlayerUI() {
         let forceMimeType = undefined;
 
         // ==========================================
-        // SONY LIV: FETCH AND REWRITE MASTER PLAYLIST
+        // SONYLIV PERFECT MASTER PLAYLIST REWRITE
         // ==========================================
         if (activeChannel.category === 'SonyLiv') {
             const activeProxyBase = SONY_PROXIES[sonyProxyIndexRef.current];
             
-            // 1. Fetch original master playlist from royal-firefly (data only)
+            // Fetch the royal-firefly master data
             const response = await fetch(finalUrl);
-            if (!response.ok) throw new Error('Failed to fetch Master M3U8 from royal-firefly');
+            if (!response.ok) throw new Error("Failed to fetch proxy master");
             const originalText = await response.text();
             
-            // 2. Format exactly as requested (Append exactly the encoded urlParam)
+            // Rewrite the internal variant URLs to the strict Ayush Proxy structure
+            // NOTE: We DO NOT decode the urlParam here because your proxy expects it encoded!
             const rewrittenText = originalText.replace(/https:\/\/royal-firefly[^\s"']*\?url=([^\s"']+)/g, (match, urlParam) => {
-                // IMPORTANT FIX: Use urlParam exactly as is. It is already properly encoded by the royal-firefly API!
                 return activeProxyBase + urlParam;
             });
 
-            // 3. Give rewritten Blob directly to Shaka Player to handle natively
+            // Hand the perfectly rewritten blob to Shaka Player
             const blob = new Blob([rewrittenText], { type: 'application/x-mpegURL' });
             finalUrl = URL.createObjectURL(blob);
             forceMimeType = 'application/x-mpegURL';
@@ -954,7 +898,7 @@ export default function PerfectPlayerUI() {
   const handleAudioManualChange = (e) => {
     const targetBw = Number(e.target.value);
     setSelectedAudio(targetBw);
-    isUserManualAudio.current = true; 
+    isUserManualAudio.current = true;
     
     if (playerRef.current) {
       playerRef.current.configure({ abr: { enabled: false } });
@@ -1075,6 +1019,7 @@ export default function PerfectPlayerUI() {
         .dly-1 { animation-delay: 0.1s; }
         .dly-2 { animation-delay: 0.2s; }
         
+        /* Premium Bottom Sheet / Modal Animations */
         @keyframes popUpModalMobile { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes popUpModalDesktop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .yt-modal-mobile { animation: popUpModalMobile 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
@@ -1254,7 +1199,7 @@ export default function PerfectPlayerUI() {
                 </button>
               </div>
 
-              {/* YOUTUBE-STYLE SETTINGS MODAL */}
+              {/* YOUTUBE-STYLE SETTINGS MODAL - Fixed to viewport (Z-[100]) so it never hides in portrait */}
               {showPlayerSettings && (
                 <div 
                   className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/60 pointer-events-auto transition-opacity"
@@ -1364,7 +1309,7 @@ export default function PerfectPlayerUI() {
 
                       <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-white">
                         <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
-                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
                       </button>
 
