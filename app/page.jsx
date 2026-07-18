@@ -53,73 +53,35 @@ const setCachedLogo = async (url, blob) => {
 };
 
 // ==========================================
-// LAZY-LOADED CARD COMPONENT (With Viewport Intersector & AbortController)
+// ORIGINAL LIGHTNING-FAST CARD COMPONENT
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [imgSrc, setImgSrc] = useState(null);
-  const [isVisible, setIsVisible] = useState(false);
-  const cardRef = useRef(null);
-  const abortControllerRef = useRef(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsVisible(entry.isIntersecting);
-      },
-      { rootMargin: '300px' } // Pre-load just before scrolling into view
-    );
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     let isMounted = true;
-    if (!channel.logo) return;
-
-    if (isVisible && !imgSrc) {
-      abortControllerRef.current = new AbortController();
-      const loadImg = async () => {
-        try {
-          const cachedBlob = await getCachedLogo(channel.logo);
-          if (cachedBlob && isMounted) {
-            setImgSrc(URL.createObjectURL(cachedBlob));
-          } else {
-            const response = await fetch(channel.logo, { signal: abortControllerRef.current.signal });
-            const blob = await response.blob();
-            if (isMounted) {
-              setImgSrc(URL.createObjectURL(blob));
-              setCachedLogo(channel.logo, blob);
-            }
-          }
-        } catch (e) {
-          if (e.name !== 'AbortError' && isMounted) {
-            setImgSrc(channel.logo); // Fallback to live URL if fetch fails but not aborted
-          }
+    const loadImg = async () => {
+      if (!channel.logo) return;
+      try {
+        const cachedBlob = await getCachedLogo(channel.logo);
+        if (cachedBlob) {
+          if (isMounted) setImgSrc(URL.createObjectURL(cachedBlob));
+        } else {
+          if (isMounted) setImgSrc(channel.logo);
+          fetch(channel.logo).then(r => r.blob()).then(blob => setCachedLogo(channel.logo, blob)).catch(() => {});
         }
-      };
-      loadImg();
-    } else if (!isVisible && abortControllerRef.current) {
-      // Abort Image Request instantly if the user fast-scrolls past it!
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-
-    return () => {
-      isMounted = false;
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
+      } catch (e) {
+        if (isMounted) setImgSrc(channel.logo);
       }
     };
-  }, [isVisible, channel.logo, imgSrc]);
+    loadImg();
+    return () => { isMounted = false; };
+  }, [channel.logo]);
 
   return (
     <button
-      ref={cardRef}
       onClick={() => onClick(channel)}
       title={channel.name}
       className={`relative w-full aspect-square bg-[#0a182b]/50 rounded-xl p-2 md:p-3 flex items-center justify-center 
@@ -261,7 +223,7 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
-  const sonyProxyIndexRef = useRef(0);
+  const sonyProxyIndexRef = useRef(0); 
   
   const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
@@ -526,7 +488,7 @@ export default function PerfectPlayerUI() {
           { name: "HUM TV", url: "hum_tv_master_custom_generation", keyId: "null", key: "null", cookie: "", category: "Entertainment", logo: "https://upload.wikimedia.org/wikipedia/en/thumb/e/e4/Hum_TV_2013.png/120px-Hum_TV_2013.png" }
         ];
 
-        // By processing sonyData LAST, it natively anchors to the BOTTOM of the SonyLiv category
+        // Process data in proper order
         const rawCombined = [...premiumData, ...zeeData, ...standardData, ...customChannels, ...sonyData];
 
         const combined = rawCombined.reduce((acc, c) => {
@@ -546,7 +508,6 @@ export default function PerfectPlayerUI() {
           }
 
           // Strict filter: Exclude junk standard channels named exactly or containing 'sony liv'
-          // (But allow real native ones we fetched from API)
           if (!c.isNativeSonyLiv && (cname === 'sony liv' || cname.includes('sony liv'))) {
              return acc;
           }
@@ -570,6 +531,15 @@ export default function PerfectPlayerUI() {
           return acc;
         }, []);
 
+        // Final sorting for SonyLiv strictly pinning copies to top
+        combined.sort((a, b) => {
+            if (a.category === 'SonyLiv' && b.category === 'SonyLiv') {
+                if (a.isCopiedToSonyLiv && b.isNativeSonyLiv) return -1;
+                if (a.isNativeSonyLiv && b.isCopiedToSonyLiv) return 1;
+            }
+            return 0;
+        });
+
         setChannels(combined);
 
         const allCats = combined.map(c => c.category || c.group || c.group_title || 'Others');
@@ -585,7 +555,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION (STRICT AUDIO LOCK & NATIVE UI UPDATES)
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION (PERFECT AUDIO LOCK)
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -598,12 +568,9 @@ export default function PerfectPlayerUI() {
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
-        
-        // Auto Rotate Proxy for SonyLiv on network error
         if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
-        
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
@@ -640,8 +607,7 @@ export default function PerfectPlayerUI() {
           player.configure({
             abr: {
               restrictions: {
-                minAudioBandwidth: highestAudioBandwidth,
-                maxAudioBandwidth: highestAudioBandwidth
+                minAudioBandwidth: highestAudioBandwidth
               }
             }
           });
@@ -706,7 +672,7 @@ export default function PerfectPlayerUI() {
           drm: drmConfig,
           manifest: { dash: { ignoreDrmInfo: false } },
           streaming: { bufferingGoal: 5 },
-          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Medium start buffer logic
+          abr: { defaultBandwidthEstimate: 1500000, enabled: true } // Buffer at Medium Quality First
         });
 
         let finalUrl = activeChannel.url;
@@ -932,15 +898,15 @@ export default function PerfectPlayerUI() {
 
   const selectQuality = (item) => {
     if (!playerRef.current) return;
-    const targetAudio = selectedAudio;
 
     if (item.index === -1) {
       isUserManualVideo.current = false;
-      // Auto re-enabled, lock audio restriction so video adapts but audio stays highest
+      // When back to auto, ensure audio restrictor is still enforcing the highest audio available!
+      const targetAudio = selectedAudio;
       playerRef.current.configure({ 
          abr: { 
            enabled: true,
-           restrictions: { minAudioBandwidth: targetAudio, maxAudioBandwidth: targetAudio }
+           restrictions: { minAudioBandwidth: targetAudio }
          } 
       });
       setQuality('Auto');
@@ -948,18 +914,17 @@ export default function PerfectPlayerUI() {
       isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
       
+      // STRICT LOGIC: Force highest audio track for the specifically chosen video height!
       const tracks = playerRef.current.getVariantTracks();
       const sameHeightTracks = tracks.filter(t => t.height === item.track.height);
-      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === targetAudio);
+      const highestAudioForHeight = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
       
-      // Strict fallback if exactly matched audio isn't found in this height, get highest available
-      if (!bestVariant) {
-        const highestAudioForHeight = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
-        bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudioForHeight) || item.track;
-      }
+      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudioForHeight);
+      if (!bestVariant) bestVariant = item.track;
       
       playerRef.current.selectVariantTrack(bestVariant, true, false);
       setQuality(item.name);
+      setSelectedAudio(bestVariant.audioBandwidth);
     }
     setShowPlayerSettings(false);
   };
@@ -1404,7 +1369,7 @@ export default function PerfectPlayerUI() {
 
                       <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-white">
                         <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
-                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
                       </button>
 
