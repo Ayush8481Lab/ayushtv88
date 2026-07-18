@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import 'shaka-player/dist/controls.css';
-import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart, Lock } from 'lucide-react';
+import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
 
 // ==========================================
 // SONY LIV PROXY ROTATION ARRAY
@@ -202,6 +202,7 @@ export default function PerfectPlayerUI() {
   const [availableQualities, setAvailableQualities] = useState([{ index: -1, name: 'Auto' }]);
   const [showPlayerSettings, setShowPlayerSettings] = useState(false);
   
+  const [audioTracks, setAudioTracks] = useState([]);
   const [selectedAudio, setSelectedAudio] = useState(null);
   
   const [isLiveStream, setIsLiveStream] = useState(false);
@@ -221,6 +222,7 @@ export default function PerfectPlayerUI() {
   const showPlayerSettingsRef = useRef(false);
   const sonyProxyIndexRef = useRef(0);
   
+  const isUserManualAudio = useRef(false); 
   const isUserManualVideo = useRef(false); 
   
   const controlsTimeoutRef = useRef(null);
@@ -522,7 +524,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION (STRICT AUDIO HARD-LOCK)
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -532,32 +534,52 @@ export default function PerfectPlayerUI() {
       if (!shaka.Player.isBrowserSupported()) return;
 
       const player = new shaka.Player(videoRef.current);
-      
-      // =================================================================================
-      // STRICT HIGHEST AUDIO MANIFEST MUTATOR (THE ULTIMATE FIX)
-      // This hooks directly into the parsed manifest and ERASES any audio track 
-      // that isn't the absolute highest kbps. Shaka is physically blind to low quality.
-      // =================================================================================
+
+      // STRICT AUDIO ENFORCEMENT: Always force highest audio quality via manifest override
       player.addEventListener('manifestparsed', (e) => {
+        try {
           if (!e.manifest || !e.manifest.variants) return;
           
-          let maxAudioBw = 0;
-          // Find the maximum audio bandwidth available
-          e.manifest.variants.forEach(variant => {
-              if (variant.audio && variant.audio.bandwidth > maxAudioBw) {
-                  maxAudioBw = variant.audio.bandwidth;
-              }
+          const variants = e.manifest.variants;
+          const groups = new Map();
+          
+          variants.forEach(v => {
+            const vidKey = v.video ? `${v.video.width}x${v.video.height}_${v.video.bandwidth}` : 'no-video';
+            const langKey = v.language || 'unknown-lang';
+            const rolesKey = (v.audio && v.audio.roles) ? v.audio.roles.join(',') : 'no-roles';
+            const key = `${vidKey}_${langKey}_${rolesKey}`;
+            
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(v);
           });
 
-          // Delete all low-quality audio variants from Shaka's memory
-          if (maxAudioBw > 0) {
-              e.manifest.variants = e.manifest.variants.filter(variant => {
-                  return !variant.audio || !variant.audio.bandwidth || variant.audio.bandwidth === maxAudioBw;
-              });
+          const optimalVariants = [];
+          groups.forEach(group => {
+            let maxAudioBw = -1;
+            group.forEach(v => {
+              const bw = (v.audio && v.audio.bandwidth) ? v.audio.bandwidth : 0;
+              if (bw > maxAudioBw) {
+                maxAudioBw = bw;
+              }
+            });
+            group.forEach(v => {
+              const bw = (v.audio && v.audio.bandwidth) ? v.audio.bandwidth : 0;
+              if (!v.audio || bw === maxAudioBw) {
+                optimalVariants.push(v);
+              }
+            });
+          });
+
+          if (optimalVariants.length > 0) {
+            e.manifest.variants = optimalVariants;
           }
+        } catch (err) {
+          console.warn('Could not enforce strict audio quality:', err);
+        }
       });
       
       player.addEventListener('error', (e) => {
+        console.error('Shaka Player Error', e.detail);
         if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
@@ -569,6 +591,9 @@ export default function PerfectPlayerUI() {
         const active = tracks.find(t => t.active);
         if (active) {
           if (active.height) setActiveResolution(`${active.height}p`);
+          if (active.audioBandwidth && !isUserManualAudio.current) {
+             setSelectedAudio(active.audioBandwidth);
+          }
         }
       });
 
@@ -577,25 +602,30 @@ export default function PerfectPlayerUI() {
         const active = tracks.find(t => t.active);
         if (active) {
           if (active.height) setActiveResolution(`${active.height}p`);
+          if (active.audioBandwidth && !isUserManualAudio.current) {
+             setSelectedAudio(active.audioBandwidth);
+          }
         }
       });
 
       player.addEventListener('trackschanged', () => {
         const tracks = player.getVariantTracks();
         
-        // Setup Video Qualities UI
         const uniqueVideo = new Map();
         tracks.forEach(t => { if (t.height && !uniqueVideo.has(t.height)) uniqueVideo.set(t.height, t); });
         const sortedVideo = Array.from(uniqueVideo.values()).sort((a, b) => b.height - a.height);
         setAvailableQualities([{ index: -1, name: 'Auto' }, ...sortedVideo.map(t => ({ index: t.id, name: `${t.height}p`, track: t }))]);
 
-        // Find the locked Max Audio and update UI
-        let currentMaxAudio = 0;
-        tracks.forEach(t => {
-            if (t.audioBandwidth && t.audioBandwidth > currentMaxAudio) currentMaxAudio = t.audioBandwidth;
-        });
-        if (currentMaxAudio > 0) {
-            setSelectedAudio(currentMaxAudio);
+        const uniqueAudio = new Map();
+        tracks.forEach(t => { if (t.audioBandwidth && !uniqueAudio.has(t.audioBandwidth)) uniqueAudio.set(t.audioBandwidth, t); });
+        const sortedAudio = Array.from(uniqueAudio.values()).sort((a,b) => b.audioBandwidth - a.audioBandwidth);
+        setAudioTracks(sortedAudio);
+        
+        const activeTrack = tracks.find(t => t.active);
+        if (activeTrack && activeTrack.audioBandwidth && !isUserManualAudio.current) {
+          setSelectedAudio(activeTrack.audioBandwidth);
+        } else if (sortedAudio.length > 0 && !isUserManualAudio.current) {
+          setSelectedAudio(sortedAudio[0].audioBandwidth);
         }
       });
 
@@ -636,7 +666,8 @@ export default function PerfectPlayerUI() {
       setPlayerError(null);
       setIsPlaying(false);
       setIsLiveStream(false);
-      isUserManualVideo.current = false; 
+      isUserManualAudio.current = false; 
+      isUserManualVideo.current = false;
       return;
     }
     const loadStream = async () => {
@@ -644,6 +675,7 @@ export default function PerfectPlayerUI() {
         setPlayerError(null);
         setIsBuffering(true);
         isUserManualVideo.current = false; 
+        isUserManualAudio.current = false;
         setQuality('Auto');
         
         let drmConfig = { clearKeys: {} };
@@ -662,7 +694,7 @@ export default function PerfectPlayerUI() {
           abr: { 
              enabled: true,
              defaultBandwidthEstimate: 1500000,
-             switchInterval: 1, // Ultra aggressive switching for video lag only
+             switchInterval: 2, 
              bandwidthDowngradeTarget: 0.85 
           }
         });
@@ -721,6 +753,7 @@ export default function PerfectPlayerUI() {
     loadStream();
   }, [activeChannel]);
 
+  // Handle Playback Time & Live Latency Sync
   const handleTimeUpdate = (e) => {
     const current = e.currentTarget.currentTime;
     setCurrentTime(current);
@@ -884,20 +917,78 @@ export default function PerfectPlayerUI() {
     } catch (err) {}
   };
 
-  // Video-Only Selection since Audio is perfectly locked naturally
   const selectQuality = (item) => {
     if (!playerRef.current) return;
     if (item.index === -1) {
       isUserManualVideo.current = false;
+      isUserManualAudio.current = false; // Restore complete auto functionality naturally 
       playerRef.current.configure({ abr: { enabled: true } });
       setQuality('Auto');
+      
+      const active = playerRef.current.getVariantTracks().find(t => t.active);
+      if (active && active.audioBandwidth) setSelectedAudio(active.audioBandwidth);
     } else {
       isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
-      playerRef.current.selectVariantTrack(item.track, true, false);
+      
+      const tracks = playerRef.current.getVariantTracks();
+      const sameHeightTracks = tracks.filter(t => t.height === item.track.height);
+      
+      let bestVariant;
+      if (isUserManualAudio.current && selectedAudio) {
+         bestVariant = sameHeightTracks.find(t => t.audioBandwidth === selectedAudio);
+      }
+      if (!bestVariant) {
+         const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
+         bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
+      }
+      if (!bestVariant) bestVariant = item.track;
+      
+      playerRef.current.selectVariantTrack(bestVariant, true, false);
       setQuality(item.name);
     }
     setShowPlayerSettings(false);
+  };
+
+  const handleAudioManualChange = (e) => {
+    const val = e.target.value;
+
+    if (val === 'auto') {
+       isUserManualAudio.current = false;
+       if (!isUserManualVideo.current && playerRef.current) {
+           playerRef.current.configure({ abr: { enabled: true } });
+           setQuality('Auto');
+       }
+       if (playerRef.current) {
+           const active = playerRef.current.getVariantTracks().find(t => t.active);
+           if (active && active.audioBandwidth) setSelectedAudio(active.audioBandwidth);
+       }
+       return;
+    }
+
+    const targetBw = Number(val);
+    setSelectedAudio(targetBw);
+    isUserManualAudio.current = true; 
+    
+    if (playerRef.current) {
+      playerRef.current.configure({ abr: { enabled: false } });
+      const tracks = playerRef.current.getVariantTracks();
+      const activeTrack = tracks.find(t => t.active);
+      const targetHeight = activeTrack ? activeTrack.height : null;
+      
+      let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
+      if (!targetTrack) {
+        targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
+      }
+      
+      if (targetTrack) {
+        playerRef.current.selectVariantTrack(targetTrack, true, true);
+        if (targetTrack.height && !isUserManualVideo.current) {
+            setQuality(`${targetTrack.height}p`);
+            isUserManualVideo.current = true;
+        }
+      }
+    }
   };
 
   const handleChannelSelect = useCallback((channel) => {
@@ -1325,11 +1416,19 @@ export default function PerfectPlayerUI() {
                   <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></span> More in {activeChannel.category || 'Category'}
                 </h3>
                 
-                {selectedAudio > 0 && (
-                  <div className="flex items-center gap-1.5 bg-[#0084ff]/20 text-[#0084ff] text-[10px] md:text-xs px-2.5 py-1 rounded-md font-bold tracking-wide border border-[#0084ff]/30 shadow-sm transition-all hover:bg-[#0084ff]/30 cursor-default">
-                    <Lock size={12} className="opacity-80" />
-                    Audio: {Math.round(selectedAudio / 1000)}kbps
-                  </div>
+                {audioTracks.length > 1 && (
+                  <select
+                    className="bg-white/5 border border-[#0084ff]/30 text-[10px] md:text-xs text-white rounded-md px-2 py-1 outline-none font-bold shadow-sm cursor-pointer hover:bg-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-[#0084ff]"
+                    value={isUserManualAudio.current ? (selectedAudio || 'auto') : 'auto'}
+                    onChange={handleAudioManualChange}
+                  >
+                    <option value="auto" className="bg-[#0a182b] text-white">Audio: Auto</option>
+                    {audioTracks.map(t => (
+                      <option key={t.audioBandwidth} value={t.audioBandwidth} className="bg-[#0a182b] text-white">
+                        {Math.round(t.audioBandwidth / 1000)} kbps {(!isUserManualAudio.current && selectedAudio === t.audioBandwidth) ? '(Active)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 )}
               </div>
               
