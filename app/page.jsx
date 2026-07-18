@@ -53,44 +53,85 @@ const setCachedLogo = async (url, blob) => {
 };
 
 // ==========================================
-// OPTIMIZED CARD COMPONENT (With IDB Caching)
+// LAZY-LOADED CARD COMPONENT (With Viewport Intersector & AbortController)
 // ==========================================
 const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [imgSrc, setImgSrc] = useState(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const cardRef = useRef(null);
+  const abortControllerRef = useRef(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVisible(entry.isIntersecting);
+      },
+      { rootMargin: '300px' } // Pre-load just before scrolling into view
+    );
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
-    const loadImg = async () => {
-      if (!channel.logo) return;
-      try {
-        const cachedBlob = await getCachedLogo(channel.logo);
-        if (cachedBlob) {
-          if (isMounted) setImgSrc(URL.createObjectURL(cachedBlob));
-        } else {
-          if (isMounted) setImgSrc(channel.logo);
-          fetch(channel.logo).then(r => r.blob()).then(blob => setCachedLogo(channel.logo, blob)).catch(() => {});
+    if (!channel.logo) return;
+
+    if (isVisible && !imgSrc) {
+      abortControllerRef.current = new AbortController();
+      const loadImg = async () => {
+        try {
+          const cachedBlob = await getCachedLogo(channel.logo);
+          if (cachedBlob && isMounted) {
+            setImgSrc(URL.createObjectURL(cachedBlob));
+          } else {
+            const response = await fetch(channel.logo, { signal: abortControllerRef.current.signal });
+            const blob = await response.blob();
+            if (isMounted) {
+              setImgSrc(URL.createObjectURL(blob));
+              setCachedLogo(channel.logo, blob);
+            }
+          }
+        } catch (e) {
+          if (e.name !== 'AbortError' && isMounted) {
+            setImgSrc(channel.logo); // Fallback to live URL if fetch fails but not aborted
+          }
         }
-      } catch (e) {
-        if (isMounted) setImgSrc(channel.logo);
+      };
+      loadImg();
+    } else if (!isVisible && abortControllerRef.current) {
+      // Abort Image Request instantly if the user fast-scrolls past it!
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    return () => {
+      isMounted = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
       }
     };
-    loadImg();
-    return () => { isMounted = false; };
-  }, [channel.logo]);
+  }, [isVisible, channel.logo, imgSrc]);
 
   return (
     <button
+      ref={cardRef}
       onClick={() => onClick(channel)}
       title={channel.name}
-      className={`relative w-full aspect-square bg-white rounded-xl p-2 md:p-3 flex items-center justify-center 
+      className={`relative w-full aspect-square bg-[#0a182b]/50 rounded-xl p-2 md:p-3 flex items-center justify-center 
         transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 focus:outline-none focus-visible:scale-105 focus-visible:ring-4 focus-visible:ring-[#0084ff]
-        ${isActive ? 'ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)]' : 'border border-gray-200 shadow-sm opacity-95 hover:opacity-100'}`}
+        ${isActive ? 'bg-white ring-4 ring-[#0084ff] scale-105 shadow-[0_0_15px_rgba(0,132,255,0.5)]' : 'border border-blue-400/5 shadow-sm bg-white hover:opacity-100'}`}
     >
       {(!loaded || error) && (
-        <div className="absolute inset-0 flex items-center justify-center p-2">
-          <span className="text-[10px] md:text-xs font-bold text-gray-500 text-center uppercase tracking-wider leading-tight">{channel.name}</span>
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-2 z-0">
+          {!loaded && !error && <div className="w-8 h-8 rounded-full bg-blue-400/10 animate-pulse mb-2" />}
+          <span className={`text-[10px] md:text-xs font-bold text-center uppercase tracking-wider leading-tight z-10 drop-shadow-md ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>
+            {channel.name}
+          </span>
         </div>
       )}
       {imgSrc && (
@@ -102,7 +143,7 @@ const ChannelCard = React.memo(({ channel, isActive, onClick }) => {
           decoding="async"
           onLoad={() => setLoaded(true)}
           onError={() => setError(true)}
-          className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
+          className={`w-full h-full object-contain pointer-events-none transition-opacity duration-500 z-10 relative ${loaded && !error ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
     </button>
@@ -544,7 +585,7 @@ export default function PerfectPlayerUI() {
     fetchInitialData();
   }, [isMounted, isOffline]);
 
-  // 3. SHAKA BARE-METAL CORE INITIALIZATION
+  // 3. SHAKA BARE-METAL CORE INITIALIZATION (STRICT AUDIO LOCK & NATIVE UI UPDATES)
   useEffect(() => {
     if (!isMounted || isOffline || !videoRef.current || playerRef.current) return;
 
@@ -557,9 +598,12 @@ export default function PerfectPlayerUI() {
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
+        
+        // Auto Rotate Proxy for SonyLiv on network error
         if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
            sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
         }
+        
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
@@ -589,10 +633,22 @@ export default function PerfectPlayerUI() {
         setAudioTracks(sortedAudio);
         
         if (sortedAudio.length > 0 && !isUserManualAudio.current) {
-          setSelectedAudio(sortedAudio[0].audioBandwidth);
+          const highestAudioBandwidth = sortedAudio[0].audioBandwidth;
+          setSelectedAudio(highestAudioBandwidth);
+          
+          // STRICT ABR AUDIO RESTRICTION: Mathematically forces highest audio while video seamlessly auto-scales!
+          player.configure({
+            abr: {
+              restrictions: {
+                minAudioBandwidth: highestAudioBandwidth,
+                maxAudioBandwidth: highestAudioBandwidth
+              }
+            }
+          });
         }
       });
 
+      // ONLY NEEDED FOR JIO TOKENS
       player.getNetworkingEngine().registerRequestFilter((type, request) => {
         const isManifest = type === shaka.net.NetworkingEngine.RequestType.MANIFEST;
         const isSegment = type === shaka.net.NetworkingEngine.RequestType.SEGMENT;
@@ -600,7 +656,6 @@ export default function PerfectPlayerUI() {
           const currentCh = activeChannelRef.current;
           if (!currentCh || !currentCh.url) return;
           let uri = request.uris[0];
-          
           if (currentCh.url.includes('__hdnea__=')) {
               const tokenMatch = currentCh.url.match(/(__hdnea__=[^&]+)/);
               if (tokenMatch && !uri.includes('__hdnea__=')) {
@@ -657,6 +712,9 @@ export default function PerfectPlayerUI() {
         let finalUrl = activeChannel.url;
         let forceMimeType = undefined;
 
+        // ==========================================
+        // SONYLIV PERFECT MASTER PLAYLIST REWRITE
+        // ==========================================
         if (activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv) {
             const activeProxyBase = SONY_PROXIES[sonyProxyIndexRef.current];
             const response = await fetch(finalUrl);
@@ -874,20 +932,31 @@ export default function PerfectPlayerUI() {
 
   const selectQuality = (item) => {
     if (!playerRef.current) return;
+    const targetAudio = selectedAudio;
+
     if (item.index === -1) {
       isUserManualVideo.current = false;
-      playerRef.current.configure({ abr: { enabled: true } });
+      // Auto re-enabled, lock audio restriction so video adapts but audio stays highest
+      playerRef.current.configure({ 
+         abr: { 
+           enabled: true,
+           restrictions: { minAudioBandwidth: targetAudio, maxAudioBandwidth: targetAudio }
+         } 
+      });
       setQuality('Auto');
     } else {
       isUserManualVideo.current = true;
       playerRef.current.configure({ abr: { enabled: false } });
       
-      // Strict Logic: Maintain Highest Audio bandwidth for the manually selected video height
       const tracks = playerRef.current.getVariantTracks();
       const sameHeightTracks = tracks.filter(t => t.height === item.track.height);
-      const highestAudio = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
-      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudio);
-      if (!bestVariant) bestVariant = item.track;
+      let bestVariant = sameHeightTracks.find(t => t.audioBandwidth === targetAudio);
+      
+      // Strict fallback if exactly matched audio isn't found in this height, get highest available
+      if (!bestVariant) {
+        const highestAudioForHeight = Math.max(...sameHeightTracks.map(t => t.audioBandwidth || 0));
+        bestVariant = sameHeightTracks.find(t => t.audioBandwidth === highestAudioForHeight) || item.track;
+      }
       
       playerRef.current.selectVariantTrack(bestVariant, true, false);
       setQuality(item.name);
@@ -901,18 +970,26 @@ export default function PerfectPlayerUI() {
     isUserManualAudio.current = true; 
     
     if (playerRef.current) {
-      playerRef.current.configure({ abr: { enabled: false } });
-      const tracks = playerRef.current.getVariantTracks();
-      const activeTrack = tracks.find(t => t.active);
-      const targetHeight = activeTrack ? activeTrack.height : null;
-      
-      let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
-      if (!targetTrack) {
-        targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
-      }
-      
-      if (targetTrack) {
-        playerRef.current.selectVariantTrack(targetTrack, true, true);
+      if (quality === 'Auto') {
+         // Auto Video + Manual Audio
+         playerRef.current.configure({ 
+            abr: { 
+              restrictions: { minAudioBandwidth: targetBw, maxAudioBandwidth: targetBw }
+            } 
+         });
+      } else {
+         // Manual Video + Manual Audio
+         const tracks = playerRef.current.getVariantTracks();
+         const activeTrack = tracks.find(t => t.active);
+         const targetHeight = activeTrack ? activeTrack.height : null;
+         
+         let targetTrack = tracks.find(t => t.audioBandwidth === targetBw && t.height === targetHeight);
+         if (!targetTrack) targetTrack = tracks.find(t => t.audioBandwidth === targetBw);
+         
+         if (targetTrack) {
+           playerRef.current.configure({ abr: { enabled: false } });
+           playerRef.current.selectVariantTrack(targetTrack, true, true);
+         }
       }
     }
   };
@@ -1021,6 +1098,10 @@ export default function PerfectPlayerUI() {
         input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.3); }
         input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #0084ff; cursor: pointer; border: none; transition: transform 0.1s ease; }
         input[type="range"]::-moz-range-thumb:hover { transform: scale(1.3); }
+        
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+        .animate-shimmer { animation: shimmer 1.5s infinite; }
+        
         @keyframes fadeSlideRight { 0% { opacity: 0.2; transform: translateX(-2px); } 50% { opacity: 1; transform: translateX(2px); } 100% { opacity: 0.2; transform: translateX(-2px); } }
         @keyframes fadeSlideLeft { 0% { opacity: 0.2; transform: translateX(2px); } 50% { opacity: 1; transform: translateX(-2px); } 100% { opacity: 0.2; transform: translateX(2px); } }
         .anim-arr-r { animation: fadeSlideRight 0.6s ease-in-out infinite; }
@@ -1079,9 +1160,15 @@ export default function PerfectPlayerUI() {
 
         <div className="flex-1 overflow-y-auto no-scrollbar scroll-smooth overscroll-none p-3 md:p-4">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-blue-400/50">
-              <Loader2 className="animate-spin text-[#0084ff]" size={36} />
-              <p className="tracking-widest text-xs font-semibold uppercase">Connecting to Live8481</p>
+            <div className="grid grid-cols-4 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3 p-1">
+              {Array.from({ length: 24 }).map((_, idx) => (
+                <div key={idx} className="relative w-full aspect-square bg-[#0d1b2a]/50 rounded-xl overflow-hidden shadow-sm border border-blue-400/5">
+                  <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-blue-400/10 to-transparent" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-blue-900/20" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <>
@@ -1317,7 +1404,7 @@ export default function PerfectPlayerUI() {
 
                       <button onClick={(e) => { e.stopPropagation(); setShowPlayerSettings(true); }} className="p-1.5 hover:text-[#0084ff] transition pointer-events-auto rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-white">
                         <svg className="w-6 h-6 text-white drop-shadow-md transition-transform duration-300 hover:rotate-45" viewBox="0 0 24 24" fill="currentColor">
-                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+                           <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
                         </svg>
                       </button>
 
