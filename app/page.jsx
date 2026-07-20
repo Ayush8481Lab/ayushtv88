@@ -5,16 +5,6 @@ import 'shaka-player/dist/controls.css';
 import { Search, Tv, PlayCircle, X, Loader2, ArrowLeft, WifiOff, AlertTriangle, RefreshCcw, Heart } from 'lucide-react';
 
 // ==========================================
-// SONY LIV PROXY ROTATION ARRAY
-// ==========================================
-const SONY_PROXIES = [
-  'https://ayushproxyserver1.vercel.app/api/proxy?url=',
-  'https://ayushproxyserver2.vercel.app/api/proxy?url=',
-  'https://ayushproxyserver3.vercel.app/api/proxy?url=',
-  'https://ayushproxyserver4.vercel.app/api/proxy?url='
-];
-
-// ==========================================
 // INDEXED-DB LOGO CACHE MANAGER
 // ==========================================
 const DB_NAME = 'LogoCacheDB';
@@ -220,7 +210,6 @@ export default function PerfectPlayerUI() {
   const tokenRef = useRef(""); 
   const activeChannelRef = useRef(null);
   const showPlayerSettingsRef = useRef(false);
-  const sonyProxyIndexRef = useRef(0);
   
   const initialVideoLocked = useRef(false);
   const isUserManualAudio = useRef(false); 
@@ -538,9 +527,6 @@ export default function PerfectPlayerUI() {
       
       player.addEventListener('error', (e) => {
         console.error('Shaka Player Error', e.detail);
-        if (activeChannelRef.current?.category === 'SonyLiv' && activeChannelRef.current?.isNativeSonyLiv) {
-           sonyProxyIndexRef.current = (sonyProxyIndexRef.current + 1) % SONY_PROXIES.length; 
-        }
         setPlayerError("Stream unavailable or DRM error. Please try another channel.");
       });
 
@@ -671,8 +657,8 @@ export default function PerfectPlayerUI() {
           drmConfig.clearKeys[activeChannel.keyId] = activeChannel.key;
         }
 
-        const isVercelProxy = activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv;
-        const preloadLatency = isVercelProxy ? 6 : 4; // Ensures latency specifications
+        const isNativeSonyLiv = activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv;
+        const preloadLatency = isNativeSonyLiv ? 6 : 4; // Ensures latency specifications
         
         // UPGRADED SMOOTH PLAYBACK & SUPERFAST START CONFIGURATION
         playerRef.current.configure({
@@ -697,13 +683,12 @@ export default function PerfectPlayerUI() {
         let forceMimeType = undefined;
 
         if (activeChannel.category === 'SonyLiv' && activeChannel.isNativeSonyLiv) {
-            const activeProxyBase = SONY_PROXIES[sonyProxyIndexRef.current];
             const response = await fetch(finalUrl);
             if (!response.ok) throw new Error("Failed to fetch proxy master");
             const originalText = await response.text();
             
             const rewrittenText = originalText.replace(/https:\/\/royal-firefly[^\s"']*\?url=([^\s"']+)/g, (match, urlParam) => {
-                return activeProxyBase + urlParam;
+                return urlParam;
             });
 
             const blob = new Blob([rewrittenText], { type: 'application/x-mpegURL' });
