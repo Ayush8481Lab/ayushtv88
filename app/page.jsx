@@ -687,8 +687,9 @@ export default function PerfectPlayerUI() {
             if (!response.ok) throw new Error("Failed to fetch proxy master");
             const originalText = await response.text();
             
+            // Decodes the extracted URL parameter into a direct streaming link
             const rewrittenText = originalText.replace(/https:\/\/royal-firefly[^\s"']*\?url=([^\s"']+)/g, (match, urlParam) => {
-                return urlParam;
+                return decodeURIComponent(urlParam);
             });
 
             const blob = new Blob([rewrittenText], { type: 'application/x-mpegURL' });
